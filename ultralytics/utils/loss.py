@@ -112,6 +112,85 @@ class BboxLoss(nn.Module):
 
         return loss_iou, loss_dfl
 
+def bboxes_iou(bboxes_a, bboxes_b, xyxy=True):
+    if bboxes_a.shape[1] != 4 or bboxes_b.shape[1] != 4:
+        raise IndexError
+
+    if xyxy:
+        tl = torch.max(bboxes_a[:, None, :2], bboxes_b[:, :2])
+        br = torch.min(bboxes_a[:, None, 2:], bboxes_b[:, 2:])
+        area_a = torch.prod(bboxes_a[:, 2:] - bboxes_a[:, :2], 1)
+        area_b = torch.prod(bboxes_b[:, 2:] - bboxes_b[:, :2], 1)
+    else:
+        tl = torch.max(
+            (bboxes_a[:, None, :2] - bboxes_a[:, None, 2:] / 2),
+            (bboxes_b[:, :2] - bboxes_b[:, 2:] / 2),
+        )
+        br = torch.min(
+            (bboxes_a[:, None, :2] + bboxes_a[:, None, 2:] / 2),
+            (bboxes_b[:, :2] + bboxes_b[:, 2:] / 2),
+        )
+
+        area_a = torch.prod(bboxes_a[:, 2:], 1)
+        area_b = torch.prod(bboxes_b[:, 2:], 1)
+    en = (tl < br).type(tl.type()).prod(dim=2)
+    area_i = torch.prod(br - tl, 2) * en  # * ((tl < br).all())
+    return area_i / (area_a[:, None] + area_b - area_i)
+
+class BboxLoss_trend(BboxLoss):
+    """Criterion class for computing training losses during training."""
+
+    def __init__(self, reg_max=16, gamma=1.0, ignore_thr=0.1, ignore_value=1.2):
+        """Initialize the BboxLoss module with regularization maximum and DFL settings."""
+        super().__init__()
+        self.dfl_loss = DFLoss(reg_max) if reg_max > 1 else None
+        self.gamma = gamma  # 控制趋势权重的gamma值
+        self.ignore_thr = ignore_thr  # 忽略的IoU阈值
+        self.ignore_value = ignore_value  # 忽略的IoU值
+
+    def forward(self, pred_dist, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask, support_bboxes):
+        """IoU loss."""
+        weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
+        iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
+        # loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
+        
+        loss_iou = 1.0 - iou
+        if support_bboxes is not None:
+            # 计算当前目标和支持目标之间的IoU
+            pair_iou = bboxes_iou(target_bboxes[fg_mask], support_bboxes, False)
+            if pair_iou.numel() != 0:
+                max_iou, _ = torch.max(pair_iou, dim=1)
+                # 根据阈值调整IoU权重
+                trend_weight = torch.where(max_iou >= self.ignore_thr, 1 / (max_iou ** self.gamma + 1e-8), torch.tensor(1 / self.ignore_value, device=max_iou.device))
+                iou_weight = (trend_weight * loss_iou.sum()) / (trend_weight * loss_iou).sum()
+                iou_weight = iou_weight.detach()
+                
+                loss_iou = (weight * iou_weight * loss_iou).sum() / (target_scores_sum)
+            else:
+                loss_iou = (weight * loss_iou).sum() / (target_scores_sum)
+                trend_weight = None
+        else:
+            loss_iou = (weight * loss_iou).sum() / (target_scores_sum)
+            trend_weight = None
+
+        # DFL loss
+        if self.dfl_loss:
+            target_ltrb = bbox2dist(anchor_points, target_bboxes, self.dfl_loss.reg_max - 1)
+            # loss_dfl = self.dfl_loss(pred_dist[fg_mask].view(-1, self.dfl_loss.reg_max), target_ltrb[fg_mask]) * weight
+            # loss_dfl = loss_dfl.sum() / target_scores_sum
+            loss_dfl = self.dfl_loss(pred_dist[fg_mask].view(-1, self.dfl_loss.reg_max), target_ltrb[fg_mask])
+            
+            if support_bboxes is not None and trend_weight is not None:
+                dfl_weight = (trend_weight * loss_dfl.sum()) / (trend_weight * loss_dfl).sum()
+                dfl_weight = dfl_weight.detach()
+                
+                loss_dfl = (loss_dfl * weight * dfl_weight).sum() / (target_scores_sum)
+            else:
+                loss_dfl = (loss_dfl * weight).sum() / (target_scores_sum)
+        else:
+            loss_dfl = torch.tensor(0.0).to(pred_dist.device)
+
+        return loss_iou, loss_dfl
 
 class RotatedBboxLoss(BboxLoss):
     """Criterion class for computing training losses during training."""
@@ -165,6 +244,8 @@ class v8DetectionLoss:
         m = model.model[-1]  # Detect() module
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
         self.hyp = h
+        self.use_trend_loss_weight=h.use_trend_loss_weight
+        
         self.stride = m.stride  # model strides
         self.nc = m.nc  # number of classes
         self.no = m.nc + m.reg_max * 4
@@ -174,7 +255,7 @@ class v8DetectionLoss:
         self.use_dfl = m.reg_max > 1
 
         self.assigner = TaskAlignedAssigner(topk=tal_topk, num_classes=self.nc, alpha=0.5, beta=6.0)
-        self.bbox_loss = BboxLoss(m.reg_max).to(device)
+        self.bbox_loss = BboxLoss_trend(m.reg_max).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 
     def preprocess(self, targets, batch_size, scale_tensor):
@@ -226,6 +307,11 @@ class v8DetectionLoss:
         gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
 
+        if self.use_trend_loss_weight and "support_bboxes" in batch:
+            support_bboxes = xywh2xyxy(batch["support_bboxes"].to(self.device).mul_(imgsz[[1, 0, 1, 0]]))
+        else:
+            support_bboxes = None
+            
         # Pboxes
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
         # dfl_conf = pred_distri.view(batch_size, -1, 4, self.reg_max).detach().softmax(-1)
@@ -251,7 +337,7 @@ class v8DetectionLoss:
         if fg_mask.sum():
             target_bboxes /= stride_tensor
             loss[0], loss[2] = self.bbox_loss(
-                pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask
+                pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask, support_bboxes
             )
 
         loss[0] *= self.hyp.box  # box gain

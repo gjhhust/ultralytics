@@ -171,3 +171,6 @@ pnnx*
 
 # calibration image
 calibration_*.npy
+
+./run/*
+!yoloft-C-384_obj365_e7.pt
