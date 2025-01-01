@@ -1,12 +1,12 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
-import os
+import os, json
 from pathlib import Path
 
 import numpy as np
 import torch
 
-from ultralytics.data import build_dataloader, build_yolo_dataset, converter
+from ultralytics.data import build_dataloader, build_yolo_dataset, converter, build_stream_dataloader
 from ultralytics.engine.validator import BaseValidator
 from ultralytics.utils import LOGGER, ops
 from ultralytics.utils.checks import check_requirements
@@ -49,14 +49,21 @@ class DetectionValidator(BaseValidator):
 
     def preprocess(self, batch):
         """Preprocesses batch of images for YOLO training."""
-        batch["img"] = batch["img"].to(self.device, non_blocking=True)
-        batch["img"] = (batch["img"].half() if self.args.half else batch["img"].float()) / 255
+        # if isinstance(batch['img'], dict):
+        #     batch['img']["backbone"] = batch['img']["backbone"].to(self.device, non_blocking=True)
+        #     batch['img']["backbone"] = (batch['img']["backbone"].half() if self.args.half else batch['img']["backbone"].float()) / 255
+        #     nb = len(batch['img']["backbone"])
+        #     height, width = batch["img"]["backbone"].shape[2:]
+        # else:
+        batch['img'] = batch['img'].to(self.device, non_blocking=True)
+        batch['img'] = (batch['img'].half() if self.args.half else batch['img'].float()) / 255
+            
         for k in ["batch_idx", "cls", "bboxes"]:
             batch[k] = batch[k].to(self.device)
 
         if self.args.save_hybrid:
+            nb = len(batch['img'])
             height, width = batch["img"].shape[2:]
-            nb = len(batch["img"])
             bboxes = batch["bboxes"] * torch.tensor((width, height, width, height), device=self.device)
             self.lb = [
                 torch.cat([batch["cls"][batch["batch_idx"] == i], bboxes[batch["batch_idx"] == i]], dim=-1)
@@ -69,12 +76,26 @@ class DetectionValidator(BaseValidator):
         """Initialize evaluation metrics for YOLO."""
         val = self.data.get(self.args.split, "")  # validation path
         self.is_coco = (
-            isinstance(val, str)
+            (isinstance(val, str)
             and "coco" in val
-            and (val.endswith(f"{os.sep}val2017.txt") or val.endswith(f"{os.sep}test-dev2017.txt"))
+            and (val.endswith(f"{os.sep}val2017.txt") or val.endswith(f"{os.sep}test-dev2017.txt")))
+            or ("eval_ann_json" in self.data)
         )  # is COCO
+        if self.is_coco:
+            with open(self.data["eval_ann_json"], 'r', encoding='utf-8') as f:
+                self.gt_cocodata = json.load(f)
+            self.image_name_map_id = {}
+            for image in self.gt_cocodata["images"]:
+                self.image_name_map_id[image["file_name"]] = image["id"]
+
+        if "classes_map" in self.data:
+            self.class_map = self.data["classes_map"]
+            self.class_map = {int(index):value  for index, value in enumerate(self.class_map)}
+        else:
+            self.class_map = converter.coco80_to_coco91_class() if self.is_coco else list(range(1, len(model.names) + 1))
+            
         self.is_lvis = isinstance(val, str) and "lvis" in val and not self.is_coco  # is LVIS
-        self.class_map = converter.coco80_to_coco91_class() if self.is_coco else list(range(1, len(model.names) + 1))
+        # self.class_map = converter.coco80_to_coco91_class() if self.is_coco else list(range(1, len(model.names) + 1))
         self.args.save_json |= self.args.val and (self.is_coco or self.is_lvis) and not self.training  # run final val
         self.names = model.names
         self.nc = len(model.names)
@@ -236,12 +257,35 @@ class DetectionValidator(BaseValidator):
             mode (str): `train` mode or `val` mode, users are able to customize different augmentations for each mode.
             batch (int, optional): Size of batches, this is for `rect`. Defaults to None.
         """
-        return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, stride=self.stride)
+        if mode == "train":
+            images_dir = self.data["train_images_dir"]
+            labels_dir = self.data["train_labels_dir"]
+        elif mode == "val":
+            images_dir = self.data["val_images_dir"]
+            labels_dir = self.data["val_labels_dir"]
+        else:
+            images_dir = os.path.join(self.data["path"],self.data["images_dir"])
+            labels_dir = os.path.join(self.data["path"],self.data["labels_dir"])
+            
+        return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, stride=self.stride,
+                                  images_dir=images_dir,
+                                  labels_dir=labels_dir)
 
     def get_dataloader(self, dataset_path, batch_size):
         """Construct and return dataloader."""
+        
+        datasampler = self.data.get('datasampler', None)
+        if datasampler == "streamSampler":
+            batch_size = 1
+            LOGGER.info(f"test dataloader using streamSampler and batcj_size=1...")
+            
         dataset = self.build_dataset(dataset_path, batch=batch_size, mode="val")
-        return build_dataloader(dataset, batch_size, self.args.workers, shuffle=False, rank=-1)  # return dataloader
+        
+        #add by guojiahao
+        if datasampler == "streamSampler":
+            return build_stream_dataloader(dataset, batch_size, self.args.workers, shuffle = False, rank=-1)  # return dataloader
+        else:
+            return build_dataloader(dataset, batch_size, self.args.workers, shuffle = False, rank=-1)  # normalSampler
 
     def plot_val_samples(self, batch, ni):
         """Plot validation image samples."""
@@ -278,10 +322,22 @@ class DetectionValidator(BaseValidator):
             boxes=predn[:, :6],
         ).save_txt(file, save_conf=save_conf)
 
+    def from_coco_get_image_id(self,file_name_mapping_id,im_file):
+        if file_name_mapping_id:
+            return file_name_mapping_id.get(im_file, 0)
+        assert False, f"error in function from_coco_get_image_id, {im_file} is not in {self.data['eval_ann_json']}"
+            
     def pred_to_json(self, predn, filename):
         """Serialize YOLO predictions to COCO json format."""
-        stem = Path(filename).stem
-        image_id = int(stem) if stem.isnumeric() else stem
+        # stem = Path(filename).stem
+        # image_id = int(stem) if stem.isnumeric() else 
+        if os.sep in self.gt_cocodata["images"][0]["file_name"]:
+            path, file = os.path.split(filename)
+            file_name = os.path.join(os.path.basename(path), file)
+        else:
+            file_name = os.path.basename(filename)
+        image_id = self.from_coco_get_image_id(self.image_name_map_id,file_name)
+        
         box = ops.xyxy2xywh(predn[:, :4])  # xywh
         box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
         for p, b in zip(predn.tolist(), box.tolist()):
@@ -298,11 +354,12 @@ class DetectionValidator(BaseValidator):
         """Evaluates YOLO output in JSON format and returns performance statistics."""
         if self.args.save_json and (self.is_coco or self.is_lvis) and len(self.jdict):
             pred_json = self.save_dir / "predictions.json"  # predictions
-            anno_json = (
-                self.data["path"]
-                / "annotations"
-                / ("instances_val2017.json" if self.is_coco else f"lvis_v1_{self.args.split}.json")
-            )  # annotations
+            # anno_json = (
+            #     self.data["path"]
+            #     / "annotations"
+            #     / ("instances_val2017.json" if self.is_coco else f"lvis_v1_{self.args.split}.json")
+            # )  # annotations
+            anno_json = Path(self.data['eval_ann_json'])  # annotations
             pkg = "pycocotools" if self.is_coco else "lvis"
             LOGGER.info(f"\nEvaluating {pkg} mAP using {pred_json} and {anno_json}...")
             try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
@@ -311,7 +368,8 @@ class DetectionValidator(BaseValidator):
                 check_requirements("pycocotools>=2.0.6" if self.is_coco else "lvis>=0.5.3")
                 if self.is_coco:
                     from pycocotools.coco import COCO  # noqa
-                    from pycocotools.cocoeval import COCOeval  # noqa
+                    # from pycocotools.cocoeval import COCOeval  # noqa
+                    from ultralytics.data.cocoeval import COCOeval  # noqa
 
                     anno = COCO(str(anno_json))  # init annotations api
                     pred = anno.loadRes(str(pred_json))  # init predictions api (must pass string, not Path)

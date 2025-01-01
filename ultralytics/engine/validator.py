@@ -171,6 +171,8 @@ class BaseValidator:
         for batch_i, batch in enumerate(bar):
             self.run_callbacks("on_val_batch_start")
             self.batch_i = batch_i
+            # if batch_i > 5:
+            #     break  # for debugging
             # Preprocess
             with dt[0]:
                 batch = self.preprocess(batch)

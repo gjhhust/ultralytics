@@ -330,3 +330,13 @@ class Concat(nn.Module):
     def forward(self, x):
         """Forward pass for the YOLOv8 mask Proto module."""
         return torch.cat(x, self.d)
+
+class List_Split(nn.Module):
+    def __init__(self, index=1):
+        """Concatenates a list of tensors along a specified dimension."""
+        super().__init__()
+        self.d = index
+
+    def forward(self, x):
+        """Forward pass for the YOLOv8 mask Proto module."""
+        return x[self.d]

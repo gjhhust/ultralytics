@@ -1,0 +1,35 @@
+# Ultralytics YOLO 🚀, AGPL-3.0 license
+# Objects365 dataset https://www.objects365.org/ by Megvii
+# Documentation: https://docs.ultralytics.com/datasets/detect/objects365/
+# Example usage: yolo train data=Objects365.yaml
+# parent
+# ├── ultralytics
+# └── datasets
+#     └── Objects365  ← downloads here (712 GB = 367G data + 345G zips)
+
+# Train/val/test sets as 1) dir: path/to/imgs, 2) file: path/to/imgs.txt, or 3) list: [path/to/imgs1, path/to/imgs2, ..]
+path: /data/jiahaoguo/datasets/gaode_6 # dataset root dir
+train: gaode6.txt # train images (relative to 'path') 1742289 images
+val: gaode6_minival.txt # val images (relative to 'path') 80000 images
+test: gaode6_minival.txt # test images (optional)
+
+# # train:gaode_5 test:gaode_6
+# train: /data/shuzhengwang/datasets/Objects365/images/train
+# train_labels_dir: /data/jiahaoguo/datasets/gaode_6/annotations/yolo/
+# train_images_dir: /data/jiahaoguo/datasets/gaode_6/images/
+
+# val: /data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.txt 
+# val_labels_dir: /data/jiahaoguo/datasets/gaode_6/annotations/yolo/
+# val_images_dir: /data/jiahaoguo/datasets/gaode_6/images/
+
+# test: /data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.txt
+# test_labels_dir: /data/jiahaoguo/datasets/gaode_6/annotations/yolo/
+# test_images_dir: /data/jiahaoguo/datasets/gaode_6/images/
+
+#coco eval
+eval_ann_json: /data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.json
+classes_map: [0,1]
+# Classes
+names:
+  0: static
+  1: moving

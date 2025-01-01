@@ -4,6 +4,9 @@
 task: detect # (str) YOLO task, i.e. detect, segment, classify, pose, obb
 mode: train # (str) YOLO mode, i.e. train, val, predict, export, track, benchmark
 
+train_slit: 4 #片段划分
+use_trend_loss_weight: False
+
 # Train settings -------------------------------------------------------------------------------------------------------
 model: # (str, optional) path to model file, i.e. yolov8n.pt, yolov8n.yaml
 data: # (str, optional) path to data file, i.e. coco8.yaml
@@ -43,6 +46,7 @@ dropout: 0.0 # (float) use dropout regularization (classify train only)
 
 # Val/Test settings ----------------------------------------------------------------------------------------------------
 val: True # (bool) validate/test during training
+val_interval:  8 #(int)  validate/test interval during training 
 split: val # (str) dataset split to use for validation, i.e. 'val', 'test' or 'train'
 save_json: False # (bool) save results to JSON file
 save_hybrid: False # (bool) save hybrid version of labels (labels + additional predictions)
