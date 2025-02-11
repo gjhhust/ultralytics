@@ -53,7 +53,35 @@ class Conv(nn.Module):
         """Apply convolution and activation without batch normalization."""
         return self.act(self.conv(x))
 
+try:
+    from ultralytics.nn.modules.ops_dcnv3.modules import DCNv3,DCNv3_pytorch
+    print("using DCNv3")
+except ImportError:
+    print("ERROR: No DCNv3")
+class DCNV3_conv(nn.Module):
+    default_act = nn.SiLU()  # default activation
+    def __init__(self, inc, ouc, k=1, s=1, p=None, g=1, d=1, act=True):
+        super().__init__()
+        
+        self.conv = nn.Conv2d(inc, ouc, k, s, autopad(k, p, d), groups=g, dilation=d, bias=False)
+        self.ouc = ouc
+        self.bn = nn.BatchNorm2d(ouc)
+        self.dcnv3 = DCNv3(ouc, kernel_size=k, stride=s, group=g, dilation=d, norm_layer="BN",act_layer="SiLU") # c++版本
+        # self.dcnv3 = DCNv3_pytorch(ouc, kernel_size=k, stride=s, group=g, dilation=d) # pytorch版本
+        self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
 
+    def forward(self, x):
+        x = self.conv(x)
+        x = x.permute(0, 2, 3, 1)
+        if x.device.type == 'cpu':
+            x = x[:,:self.ouc,...]
+        else:
+            x = self.dcnv3(x)
+        
+        x = x.permute(0, 3, 1, 2)
+        x = self.act(self.bn(x))
+        return x
+    
 class Conv2(Conv):
     """Simplified RepConv module with Conv fusing."""
 
@@ -340,3 +368,20 @@ class List_Split(nn.Module):
     def forward(self, x):
         """Forward pass for the YOLOv8 mask Proto module."""
         return x[self.d]
+    
+class InputData(nn.Module):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self, x):
+        # Get the number of channels
+        n = x.size(1)
+        
+        if n == 3:
+            # Return the tensor directly if it has 3 channels
+            return (x, None)
+        elif n > 3:
+            # Split the tensor into two parts
+            tensor1 = x[:, :3, :, :]  # First 3 channels
+            tensor2 = x[:, 3:, :, :]  # Remaining n-3 channels
+            return (tensor1, tensor2)

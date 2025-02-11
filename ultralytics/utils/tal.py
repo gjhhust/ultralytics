@@ -37,7 +37,7 @@ class TaskAlignedAssigner(nn.Module):
         self.eps = eps
 
     @torch.no_grad()
-    def forward(self, pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt):
+    def forward(self, pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt, video_names = [], frame_numbers=[]):
         """
         Compute the task-aligned assignment. Reference code is available at
         https://github.com/Nioolek/PPYOLOE_pytorch/blob/master/ppyoloe/assigner/tal_assigner.py.
@@ -73,6 +73,10 @@ class TaskAlignedAssigner(nn.Module):
         try:
             return self._forward(pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt)
         except torch.OutOfMemoryError:
+            LOGGER.warning(f"video_names: {video_names}")
+            LOGGER.warning(f"frame_numbers: {frame_numbers}")
+            LOGGER.warning(f"gt_labels shape: {gt_labels.shape}")
+            LOGGER.warning(f"gt_bboxes shape: {gt_bboxes.shape}")
             # Move tensors to CPU, compute, then move back to original device
             LOGGER.warning("WARNING: CUDA OutOfMemoryError in TaskAlignedAssigner, using CPU")
             cpu_tensors = [t.cpu() for t in (pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt)]
