@@ -65,6 +65,10 @@ class StreamSampler(DistributedSampler):
         self.last_next_frame_index = [None for i in range(int(self.batch_size))]
         self.next_train_video_index = 0
         self.indices = self.dataset.muti_rank_indices_splits[self.rank]
+        
+        random.seed(44)
+        random.shuffle(self.indices)
+        
         self.data_length = self.dataset.per_gpu_total_frames - self.dataset.per_gpu_total_frames%self.batch_size
         # print(f"sampler init: {len(self.indices)}")
 

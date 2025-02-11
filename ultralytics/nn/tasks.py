@@ -28,6 +28,7 @@ from ultralytics.nn.modules import (
     Bottleneck,
     BottleneckCSP,
     C2f,
+    C2f_ODConv,
     C2fAttn,
     C2fCIB,
     C2fPSA,
@@ -62,7 +63,11 @@ from ultralytics.nn.modules import (
     WorldDetect,
     v10Detect,
     List_Split,
+    InputData,
     MSTF_STREAM,
+    MSTF_STREAM_cbam,
+    MSTF_STREAM_cbam_Focus,
+    MSTF_STREAM_cbam_Focus_EPOCH2,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -335,7 +340,7 @@ class DetectionModel(BaseModel):
                     return self.forward(x)["one2many"]
                 return self.forward(x)[0] if isinstance(m, (Segment, Pose, OBB)) else self.forward(x)
 
-            m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(1, ch, s, s))])  # forward
+            m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(2, ch, s, s))])  # forward
             self.stride = m.stride
             m.bias_init()  # only run once
         else:
@@ -982,6 +987,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C1,
             C2,
             C2f,
+            C2f_ODConv,
             C3k2,
             RepNCSPELAN4,
             ELAN1,
@@ -1015,6 +1021,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 C1,
                 C2,
                 C2f,
+                C2f_ODConv,
                 C3k2,
                 C2fAttn,
                 C3,
@@ -1048,6 +1055,9 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c2 = sum(ch[x] for x in f)
         elif m is List_Split:
             c2 = ch[f][args[0]]
+        elif m is InputData:
+            c2 = args
+            args = []
         elif m in {Detect, WorldDetect, Segment, Pose, OBB, ImagePoolingAttn, v10Detect}:
             args.append([ch[x] for x in f])
             if m is Segment:
@@ -1062,7 +1072,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             args = [c1, c2, *args[1:]]
         elif m is CBFuse:
             c2 = ch[f[-1]]
-        elif m is MSTF_STREAM:
+        elif m in (MSTF_STREAM, MSTF_STREAM_cbam, MSTF_STREAM_cbam_Focus, MSTF_STREAM_cbam_Focus_EPOCH2):
             c1 = [ch[f_] for f_ in f]
             c2 = c1
             args.insert(0, c1)

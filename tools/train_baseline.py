@@ -9,4 +9,4 @@ model = YOLO("config/yolo/yolov8_S.yaml").load("yolov8s.pt") #train yolov8-l
 
 results = model.train(data="config/dataset/Objects365.yaml",
                       cfg="config/train/default.yaml", 
-                      batch=2, epochs=7, imgsz=896, device=[2,3],workers = 1)
+                      batch=20*2, epochs=7, imgsz=896, device=[2,3],workers = 1)
