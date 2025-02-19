@@ -1,6 +1,4 @@
 from ultralytics import YOLOFT
-import os
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 
 # Load a COCO-pretrained RT-DETR-l model
 # model = YOLOFT("yoloft/train113/weights/last.pt") #resume
@@ -9,9 +7,10 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 # model = YOLO("config/yoloft/yoloftsv2-C-384.yaml").load("./yoloft-C-384_obj365_e7.pt")
 # model = YOLO("/data/shuzhengwang/project/ultralytics/runs/detect/train25/weights/last.pt")
 # model = YOLO("config/yoloft/yoloftsv2-C-384.yaml").load("./yoloft-C-384_obj365_e7.pt")
-model = YOLOFT("config/yoloft/yoloftsv2-ALL-384_cbam_Focus_2.yaml").load("yolov8s.pt")
+model = YOLOFT("config/yoloft_onxx/yoloftS2_v2-ALL-384_cbam.yaml").load("yolov8l.pt")
 
 results = model.train(data="config/dataset/Train_6_Test_gaode6.yaml",
                       cfg="config/train/default.yaml", 
-                      batch=6, epochs=25, imgsz=896, device=[3],workers = 2)
-print("yoloftsv2-C-384_cbam_Focus \nload(./yolov8s.pt)  \nTrain_6_Test_gaode6")
+                      batch=18, epochs=25, imgsz=896, device=[1],workers = 6)
+                    # batch=6, epochs=25, imgsz=896, device=[2],workers = 6)
+# print("yoloftsv2-C-384_cbam_Focus \nload(./yolov8s.pt)  \nTrain_6_Test_gaode6")

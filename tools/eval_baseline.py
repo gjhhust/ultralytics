@@ -1,7 +1,7 @@
-from ultralytics import YOLO
+from ultralytics import YOLO, YOLOFT
 
 # Load a COCO-pretrained RT-DETR-l model
-path = "/data/shuzhengwang/project/ultralytics/runs/detect/train27/weights/epoch20.pt"
+path = "/data/shuzhengwang/project/ultralytics/runs/detect/train81/weights/last.pt"
 model = YOLO(path)  # load a custom model
 
 model.info()

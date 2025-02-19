@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ultralytics.engine.model import Model
 from ultralytics.models import yoloft
-from ultralytics.nn.tasks import  DetectionModel
+from ultralytics.nn.tasks import  VideoDetectionModel
 from ultralytics.utils import ROOT, yaml_load
 
 
@@ -21,7 +21,7 @@ class YOLOFT(Model):
         """Map head to model, trainer, validator, and predictor classes."""
         return {
             "detect": {
-                "model": DetectionModel,
+                "model": VideoDetectionModel,
                 "trainer": yoloft.detect.DetectionTrainer,
                 "validator": yoloft.detect.DetectionValidator,
                 "predictor": yoloft.detect.DetectionPredictor,

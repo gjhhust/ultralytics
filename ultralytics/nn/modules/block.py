@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
-from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad
+from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad, DCNV3_conv
 from .transformer import TransformerBlock
 
 __all__ = (
@@ -1110,8 +1110,42 @@ class C2fPSA(C2f):
         assert c1 == c2
         super().__init__(c1, c2, n=n, e=e)
         self.m = nn.ModuleList(PSABlock(self.c, attn_ratio=0.5, num_heads=self.c // 64) for _ in range(n))
+    
+class Bottleneck_DCNV3(nn.Module):
+    # Standard bottleneck
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):  # ch_in, ch_out, shortcut, groups, kernels, expand
+        super().__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        assert k[1][0] == k[1][1]
+        self.cv2 = DCNV3_conv(c_, c2, k[1][0], 1, g=g)
+        self.add = shortcut and c1 == c2
+ 
+    def forward(self, x):
+        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
 
+class C2f_DCNV3(nn.Module):
+    """Faster Implementation of CSP Bottleneck with 2 convolutions."""
 
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+        super().__init__()
+        self.c = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
+        self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
+        self.m = nn.ModuleList(Bottleneck_DCNV3(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
+
+    def forward(self, x):
+        """Forward pass through C2f layer."""
+        y = list(self.cv1(x).chunk(2, 1))
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
+
+    def forward_split(self, x):
+        """Forward pass using split() instead of chunk()."""
+        y = list(self.cv1(x).split((self.c, self.c), 1))
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
+    
 class SCDown(nn.Module):
     """
     SCDown module for downsampling with separable convolutions.
@@ -1310,18 +1344,17 @@ class MSTF_STREAM(nn.Module): #
 
 from ultralytics.nn.modules.conv import CBAM
 
-class MSTF_STREAM_cbam(MSTF_STREAM): #
-    def __init__(self, in_channels, epoch_train=0, depth=1.0,
-            width=1.0, n_levels=3, depthwise= False,
-            act=nn.SiLU(), **kwargs):
-        super().__init__(in_channels, epoch_train=0, depth=1.0,
-            width=1.0, n_levels=3, depthwise= False,
-            act=nn.SiLU(), **kwargs)
-        
+class MSTF_STREAM_cbam(nn.Module): #
+    def __init__(self, in_channels, depth=1.0,
+        width=1.0, n_levels=3, depthwise=False,
+        act=nn.SiLU(),):
+        super(MSTF_STREAM_cbam, self).__init__()
         self.in_channels = in_channels
-        self.epoch_train = epoch_train
-        # buffer
-        self.buffer = StreamBuffer("MemoryAtten", number_feature=n_levels)
+        assert len(in_channels)-1 == n_levels, "features number must be equal to n_levels"
+        assert in_channels[0] == in_channels[1:], f"input last feature dims must equal to now feature dims, plase set InputData:[f{in_channels[1:]}]"
+        in_channels = in_channels[1:]
+        # # buffer
+        # self.buffer = StreamBuffer("MemoryAtten", number_feature=n_levels)
         
         conv = DWConv if depthwise else Conv
         
@@ -1405,9 +1438,50 @@ class MSTF_STREAM_cbam(MSTF_STREAM): #
             )
         )
         
-        self.img_metas = None
     
+    def forward(self, x):
+        """
+        Args:
+            inputs: input images.
 
+        Returns:
+            Tuple[Tensor]: FPN feature.
+        """
+        # self.plot = True
+        fmaps_old = x[0]  
+        fmaps_new = x[1:]  #3,B,C,H,W The incoming scale must be from large to small
+        if fmaps_old == [None, None, None]:
+            fmaps_old = [f.clone().detach() for f in fmaps_new]
+        
+        [fmap2, fmap1, fmap0] = fmaps_old
+        [rurrent_x2, rurrent_x1, rurrent_x0] = fmaps_new
+
+        rurrent_fpn_out0 = self.lateral_conv0(rurrent_x0)  # 1/8->1/8
+        rurrent_f_out0 = F.interpolate(rurrent_fpn_out0, size=rurrent_x1.shape[2:4], mode='nearest')  # 1/8->1/4
+        rurrent_f_out0 = torch.cat([rurrent_f_out0, rurrent_x1], 1)  # 1/4->1/4
+        rurrent_f_out0 = self.C3_p4(rurrent_f_out0)  # 1/4->1/16
+
+        rurrent_fpn_out1 = self.reduce_conv1(rurrent_f_out0)  # 1/16->1/16
+        rurrent_f_out1 = F.interpolate(rurrent_fpn_out1, size=rurrent_x2.shape[2:4], mode='nearest')  # 256/8
+        rurrent_f_out1 = torch.cat([rurrent_f_out1, rurrent_x2], 1)  # 256->512/8
+        rurrent_pan_out2 = self.C3_p3(rurrent_f_out1)  # 512->256/8
+
+        rurrent_p_out1 = self.bu_conv2(rurrent_pan_out2)  # 256->256/16
+        rurrent_p_out1 = torch.cat([rurrent_p_out1, rurrent_fpn_out1], 1)  # 256->512/16
+        rurrent_pan_out1 = self.C3_n3(rurrent_p_out1)  # 512->512/16
+
+        rurrent_p_out0 = self.bu_conv1(rurrent_pan_out1)  # 512->512/32
+        rurrent_p_out0 = torch.cat([rurrent_p_out0, rurrent_fpn_out0], 1)  # 512->1024/32
+        rurrent_pan_out0 = self.C3_n4(rurrent_p_out0)  # 1024->1024/32
+
+        # result_first_frame, fmaps_old = self.buffer.update_memory([rurrent_pan_out2,rurrent_pan_out1,rurrent_pan_out0], img_metas)
+        
+        # 融合
+        pan_out2 = torch.cat([self.jian2(rurrent_pan_out2), self.jian2(fmap2)], dim=1) + rurrent_x2
+        pan_out1 = torch.cat([self.jian1(rurrent_pan_out1), self.jian1(fmap1)], dim=1) + rurrent_x1
+        pan_out0 = torch.cat([self.jian0(rurrent_pan_out0), self.jian0(fmap0)], dim=1) + rurrent_x0
+        
+        return [pan_out2, pan_out1, pan_out0]
 
 class MSTF_STREAM_cbam_Focus(nn.Module): #
     def __init__(self, in_channels, epoch_train=0, depth=1.0,

@@ -74,7 +74,7 @@ from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset
 from ultralytics.nn.autobackend import check_class_names, default_class_names
 from ultralytics.nn.modules import C2f, Classify, Detect, RTDETRDecoder
-from ultralytics.nn.tasks import DetectionModel, SegmentationModel, WorldModel
+from ultralytics.nn.tasks import DetectionModel, SegmentationModel, WorldModel, VideoDetectionModel
 from ultralytics.utils import (
     ARM64,
     DEFAULT_CFG,
@@ -320,6 +320,8 @@ class Exporter:
 
         # Assign
         self.im = im
+        if isinstance(model, VideoDetectionModel):
+            _, self.fmaps_old = model(im)
         self.model = model
         self.file = file
         self.output_shape = (
@@ -457,7 +459,7 @@ class Exporter:
         LOGGER.info(f"\n{prefix} starting export with onnx {onnx.__version__} opset {opset_version}...")
         f = str(self.file.with_suffix(".onnx"))
 
-        output_names = ["output0", "output1"] if isinstance(self.model, SegmentationModel) else ["output0"]
+        output_names = ["output0", "output1"] if isinstance(self.model, (SegmentationModel, VideoDetectionModel)) else ["output0"]
         dynamic = self.args.dynamic
         if dynamic:
             dynamic = {"images": {0: "batch", 2: "height", 3: "width"}}  # shape(1,3,640,640)
@@ -466,17 +468,34 @@ class Exporter:
                 dynamic["output1"] = {0: "batch", 2: "mask_height", 3: "mask_width"}  # shape(1,32,160,160)
             elif isinstance(self.model, DetectionModel):
                 dynamic["output0"] = {0: "batch", 2: "anchors"}  # shape(1, 84, 8400)
+            elif isinstance(self.model, VideoDetectionModel):
+                # For VideoDetectionModel, input is (imgs, (fmap2, fmap1, fmap0))
+                dynamic["output0"] = {0: "batch", 2: "anchors"}  # shape(1, 84, 8400)
+                dynamic["output1"] = {0: "batch", 2: "height", 3: "width"}  # shape(1, C, W//8, H//8)
+                dynamic["output2"] = {0: "batch", 2: "height", 3: "width"}  # shape(1, C, W//16, H//16)
+                dynamic["output3"] = {0: "batch", 2: "height", 3: "width"}  # shape(1, C, W//32, H//32)
+        
+        # Export ONNX
+        if isinstance(self.model, VideoDetectionModel):
+            # For VideoDetectionModel, input is (imgs, (fmap2, fmap1, fmap0))
+            input_names = ["images","fmap2" , "fmap1", "fmap0"]
+            # Ensure we pass a tuple (img, (fmap2, fmap1, fmap0)) as the input
+            model_input = (self.im.cpu(), *(fmap.cpu() for fmap in self.fmaps_old)) if dynamic else (self.im, *self.fmaps_old)
+        else:
+            # Default input name for other models
+            input_names = ["images"]
+            model_input = self.im
 
         torch.onnx.export(
             self.model.cpu() if dynamic else self.model,  # dynamic=True only compatible with cpu
-            self.im.cpu() if dynamic else self.im,
+            model_input,  # Pass the input tuple correctly
             f,
             verbose=False,
             opset_version=opset_version,
             do_constant_folding=True,  # WARNING: DNN inference with torch>=1.12 may require do_constant_folding=False
-            input_names=["images"],
-            output_names=output_names,
-            dynamic_axes=dynamic or None,
+            input_names=input_names,  # Input names for ONNX
+            output_names=output_names,  # Output names for ONNX
+            dynamic_axes=dynamic or None,  # Dynamic axes if applicable
         )
 
         # Checks
