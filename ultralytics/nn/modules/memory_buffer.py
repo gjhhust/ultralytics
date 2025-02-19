@@ -80,3 +80,35 @@ class StreamBuffer(object):
             self.img_metas_memory[i] = img_metas[i].copy()
 
         return result_first_frame, results_memory
+
+
+class StreamBuffer_onnx(object):
+    def __init__(self, number_feature=3):
+        super().__init__()
+        self.bs = 0
+        self.number_feature = number_feature
+        self.spatial_shape = None
+
+    def update_memory(self, memory_last, img_metas, spatial_shape):
+        spatial_shape = torch.as_tensor(spatial_shape, device=memory_last[0].device)
+        
+        memory_fmaps = [f.detach().clone() for f in memory_last]
+
+        b, dim, h, w = memory_last[0].shape
+        assert len(img_metas) == b
+        self.bs = b
+        result_first_frame = [img_metas[i]["is_first"] for i in range(b)]
+        
+        if self.spatial_shape is None:
+            self.spatial_shape = spatial_shape
+            
+        if not torch.equal(self.spatial_shape, spatial_shape):
+            self.spatial_shape = spatial_shape
+            return result_first_frame, [None, None, None]
+            
+        for i in range(self.bs):
+            if result_first_frame[i]:
+                for f in range(len(memory_last)):
+                    memory_fmaps[f][i] = torch.zeros_like(memory_last[f][i], device=memory_last[f][i].device)
+
+        return result_first_frame, memory_fmaps

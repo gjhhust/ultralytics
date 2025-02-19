@@ -190,7 +190,6 @@ CFG_INT_KEYS = {  # integer-only arguments
     "line_width",
     "nbs",
     "save_period",
-    "train_slit",
     "val_interval",
 }
 CFG_BOOL_KEYS = {  # boolean-only arguments

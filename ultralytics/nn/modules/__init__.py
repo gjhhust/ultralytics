@@ -37,6 +37,7 @@ from .block import (
     Bottleneck,
     BottleneckCSP,
     C2f,
+    C2f_DCNV3,
     C2fAttn,
     C2fCIB,
     C2fPSA,

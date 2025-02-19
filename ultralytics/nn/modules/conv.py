@@ -74,7 +74,7 @@ class DCNV3_conv(nn.Module):
         x = self.conv(x)
         x = x.permute(0, 2, 3, 1)
         if x.device.type == 'cpu':
-            x = x[:,:self.ouc,...]
+            x = x[:,...,:self.ouc]
         else:
             x = self.dcnv3(x)
         
@@ -375,13 +375,8 @@ class InputData(nn.Module):
     
     def forward(self, x):
         # Get the number of channels
-        n = x.size(1)
+        if isinstance(x, (list, tuple)):
+            return x
+        else:
+            return [x, [None, None, None]]
         
-        if n == 3:
-            # Return the tensor directly if it has 3 channels
-            return (x, None)
-        elif n > 3:
-            # Split the tensor into two parts
-            tensor1 = x[:, :3, :, :]  # First 3 channels
-            tensor2 = x[:, 3:, :, :]  # Remaining n-3 channels
-            return (tensor1, tensor2)

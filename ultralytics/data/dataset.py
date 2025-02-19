@@ -679,17 +679,18 @@ class YOLOVideoDataset(BaseDataset_2):
         np.random.seed(seed)
         random.seed(seed)
         
-    def _train_video(self, hyp):
+    def _train_video(self, hyp, index):
         """Sets bbox loss and builds transformations."""
         # hyp.mosaic = 0.0
         self.transforms = self.build_transforms(hyp) 
-        self.video_sampler_split(self.video_image_dict.copy(), mode="split_random", length=self.data["split_length"][1])
+        LOGGER.info(f"now train dataset convert to split_length: {self.data['split_length'][index]}   mode: split_random")
+        self.video_sampler_split(self.video_image_dict.copy(), mode="split_random", length=self.data["split_length"][index])
 
     def _train_backbone(self, hyp):
         """Sets bbox loss and builds transformations."""
         # hyp.mosaic = 1.0
         self.transforms = self.build_transforms(hyp) 
-        self.video_sampler_split(self.video_image_dict.copy(), mode="split_legnth", length=self.data["split_length"][0])
+        self.video_sampler_split(self.video_image_dict.copy(), mode="split_random", length=self.data["split_length"][0])
 
     def _train_all(self, hyp):
         """Sets bbox loss and builds transformations."""

@@ -10,8 +10,9 @@ import torch.nn as nn
 
 from ultralytics.data import build_dataloader, build_yolo_dataset, build_stream_dataloader
 from ultralytics.engine.trainer import BaseTrainer
-from ultralytics.models import yolo
-from ultralytics.nn.tasks import DetectionModel
+from ultralytics.models import yoloft
+from ultralytics.nn.tasks import VideoDetectionModel
+from ultralytics.nn.modules.memory_buffer import StreamBuffer_onnx 
 from ultralytics.utils import LOGGER, RANK
 from ultralytics.utils.plotting import plot_images, plot_labels, plot_results, plot_video
 from ultralytics.utils.torch_utils import de_parallel, torch_distributed_zero_first
@@ -118,6 +119,13 @@ class DetectionTrainer(BaseTrainer):
                 ]  # new shape (stretched to gs-multiple)
                 imgs = nn.functional.interpolate(imgs, size=ns, mode="bilinear", align_corners=False)
             batch["img"] = imgs
+            
+        if self.save_fmaps is not None:
+            _, fmaps_old = self.buffer.update_memory(self.save_fmaps, batch["img_metas"], batch["img"].shape)
+            batch["input"] = (batch["img"], fmaps_old)
+        else:
+            batch["input"] = batch["img"]
+        
         return batch
 
     def _do_train(self, world_size=1):
@@ -153,6 +161,11 @@ class DetectionTrainer(BaseTrainer):
         self.optimizer.zero_grad()  # zero any resumed gradients to ensure stability on train start
         
         datasampler = self.data.get('datasampler', None)
+
+        self.buffer = StreamBuffer_onnx(number_feature=3)
+        self.save_fmaps = None
+        if isinstance(self.args.train_slit, int):
+            self.args.train_slit = [self.args.train_slit]
         while True:
             self.epoch = epoch
             self.run_callbacks("on_train_epoch_start")
@@ -168,17 +181,18 @@ class DetectionTrainer(BaseTrainer):
             if epoch == (self.epochs - self.args.close_mosaic):
                 self._close_dataloader_mosaic()
                 self.train_loader.reset()
-                
-            if epoch == self.args.train_slit:
-                LOGGER.info('start train video')
-                if hasattr(self.train_loader.dataset, '_train_video'):
-                    self.train_loader.dataset._train_video(hyp=self.args)
-                self.train_loader.reset()   
-            elif epoch == 0:
-                LOGGER.info('start train backbone')
-                if hasattr(self.train_loader.dataset, '_train_backbone'):
-                    self.train_loader.dataset._train_backbone(hyp=self.args)
-                self.train_loader.reset()   
+            
+            for sp, slipt_spot in enumerate(self.args.train_slit):
+                if epoch == slipt_spot:
+                    LOGGER.info('start train video')
+                    if hasattr(self.train_loader.dataset, '_train_video'):
+                        self.train_loader.dataset._train_video(hyp=self.args, index = sp)
+                    self.train_loader.reset()   
+            # if epoch == 0:
+            #     LOGGER.info('start train backbone')
+            #     if hasattr(self.train_loader.dataset, '_train_backbone'):
+            #         self.train_loader.dataset._train_backbone(hyp=self.args)
+            #     self.train_loader.reset()   
 
             if RANK in {-1, 0}:
                 LOGGER.info(self.progress_string())
@@ -186,8 +200,8 @@ class DetectionTrainer(BaseTrainer):
             self.tloss = None
             for i, batch in pbar:
                 self.run_callbacks("on_train_batch_start")
-                # if i < 5580:
-                #     continue
+                # if i > 5:
+                #     break
                 # Warmup
                 ni = i + nb * epoch
                 if ni <= nw:
@@ -204,13 +218,8 @@ class DetectionTrainer(BaseTrainer):
                 # Forward
                 with autocast(self.amp):
                     batch = self.preprocess_batch(batch)
-                    if datasampler == "streamSampler":
-                        model_to_check = self.model.module if hasattr(self.model, 'module') else self.model
-                        for m in model_to_check.model:
-                            if type(m) in (MSTF_STREAM, MSTF_STREAM_cbam,MSTF_STREAM_cbam_Focus):  # set plot params
-                                m.img_metas = batch["img_metas"]
-     
-                    self.loss, self.loss_items = self.model(batch)
+                    (self.loss, self.loss_items), self.save_fmaps = self.model(batch)
+
                     if RANK != -1:
                         self.loss *= world_size
                     self.tloss = (
@@ -331,7 +340,7 @@ class DetectionTrainer(BaseTrainer):
 
     def get_model(self, cfg=None, weights=None, verbose=True):
         """Return a YOLO detection model."""
-        model = DetectionModel(cfg, nc=self.data["nc"], verbose=verbose and RANK == -1)
+        model = VideoDetectionModel(cfg, nc=self.data["nc"], verbose=verbose and RANK == -1)
         if weights:
             model.load(weights)
         return model
@@ -339,7 +348,7 @@ class DetectionTrainer(BaseTrainer):
     def get_validator(self):
         """Returns a DetectionValidator for YOLO model validation."""
         self.loss_names = "box_loss", "cls_loss", "dfl_loss"
-        return yolo.detect.DetectionValidator(
+        return yoloft.detect.DetectionValidator(
             self.test_loader, save_dir=self.save_dir, args=copy(self.args), _callbacks=self.callbacks
         )
 
