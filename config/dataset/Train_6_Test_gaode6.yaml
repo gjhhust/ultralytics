@@ -16,7 +16,7 @@ test: /data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.txt
 test_labels_dir: /data/jiahaoguo/dataset/gaode_6/annotations/yolo/
 test_images_dir: /data/jiahaoguo/dataset/gaode_6/images/
 
-split_length: [8, 50] #先使用10的片段训练，再50 "all"表示不切割
+split_length: [2, 20, 100] #先使用10的片段训练，再50 "all"表示不切割
 
 
 match_number: 1  #当前帧前后各取一共几个关连帧，match_number=2即前后各取一个

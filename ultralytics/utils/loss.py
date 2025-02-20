@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ultralytics.nn.modules import Conv
 from ultralytics.utils.metrics import OKS_SIGMA
 from ultralytics.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
 from ultralytics.utils.tal import RotatedTaskAlignedAssigner, TaskAlignedAssigner, dist2bbox, dist2rbox, make_anchors
@@ -12,6 +13,123 @@ from ultralytics.utils.torch_utils import autocast
 from .metrics import bbox_iou, probiou
 from .tal import bbox2dist
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class BBoxFeatureExtractor(nn.Module):
+    def __init__(self, feature_channels):
+        """
+        初始化模型。
+        输入:
+            feature_channels: 每个尺度特征图的通道数 [C0, C1, C2, C3]
+        """
+        super(BBoxFeatureExtractor, self).__init__()
+        self.feature_channels = feature_channels
+
+        # 用于将融合后的特征压缩为实例特征
+        self.conv = Conv(sum(feature_channels), 2 * max(feature_channels), k=1)
+        
+        # 计算对比学习损失
+        self.criterion = ContrastiveLoss()
+
+    def forward(self, features, bboxes, gt_ids):
+        """
+        输入:
+            features: 多尺度特征图
+            bboxes: 边界框 [B, 4]，形式为 [cx, cy, w, h]
+            gt_ids: gt_ids: 实例的 gt_id [B]
+        输出:
+            instance_features: 实例特征 [B, 2*C, 1, 1]
+        """
+        # 提取每个 bbox 对应的特征并对齐
+        aligned_features = []
+        for i, (feature, bbox) in enumerate(zip(features, bboxes)):
+            # 提取 bbox 区域的特征
+            bbox_feature = self.extract_bbox_feature(feature, bbox)
+
+            # 将低分辨率特征对齐到最高分辨率
+            if i > 0:
+                bbox_feature = F.interpolate(bbox_feature, size=(features[0].size(2), features[0].size(3)), mode='bilinear', align_corners=False)
+
+            aligned_features.append(bbox_feature)
+
+        # 按照通道维度拼接特征
+        fused_feature = torch.cat(aligned_features, dim=1)  # [B, C0+C1+C2+C3, W0, H0]
+
+        # 压缩为实例特征
+        instance_features = self.conv(fused_feature)  # [B, 2*C, 1, 1]
+
+        loss = self.criterion(instance_features, gt_ids)
+        return loss
+
+    def extract_bbox_feature(self, feature, bbox):
+        """
+        从特征图中提取 bbox 对应的区域。
+        输入:
+            feature: 特征图 [B, C, H, W]
+            bbox: 边界框 [4]，形式为 [cx, cy, w, h]
+        输出:
+            bbox_feature: bbox 区域的特征 [B, C, W0, H0]
+        """
+        B, C, H, W = feature.shape
+        cx, cy, w, h = bbox
+
+        # 计算 bbox 的左上角和右下角坐标
+        x1 = int((cx - w / 2) * W)
+        y1 = int((cy - h / 2) * H)
+        x2 = int((cx + w / 2) * W)
+        y2 = int((cy + h / 2) * H)
+
+        # 提取 bbox 区域的特征
+        bbox_feature = feature[:, :, y1:y2, x1:x2]
+
+        return bbox_feature
+
+
+class ContrastiveLoss(nn.Module):
+    def __init__(self, temperature=0.1):
+        """
+        初始化对比学习损失。
+        输入:
+            temperature: 温度参数，控制对比学习的难度
+        """
+        super(ContrastiveLoss, self).__init__()
+        self.temperature = temperature
+
+    def forward(self, instance_features, gt_ids):
+        """
+        输入:
+            instance_features: 实例特征 [B, 2*C, 1, 1]
+            gt_ids: 实例的 gt_id [B]
+        输出:
+            loss: 对比学习损失
+        """
+        B = instance_features.size(0)
+
+        # 将实例特征展平为 [B, 2*C]
+        instance_features = instance_features.view(B, -1)
+
+        # 计算相似度矩阵
+        similarity_matrix = torch.matmul(instance_features, instance_features.T) / self.temperature  # [B, B]
+
+        # 计算对比学习损失
+        loss = 0
+        for i in range(B):
+            pos_mask = gt_ids == gt_ids[i]  # 正样本掩码
+            neg_mask = ~pos_mask  # 负样本掩码
+
+            # 正样本相似度
+            pos_sim = similarity_matrix[i, pos_mask]
+            # 负样本相似度
+            neg_sim = similarity_matrix[i, neg_mask]
+
+            # 计算 InfoNCE 损失
+            numerator = torch.exp(pos_sim).sum()
+            denominator = torch.exp(neg_sim).sum() + numerator
+            loss += -torch.log(numerator / denominator)
+
+        return loss / B
 
 class VarifocalLoss(nn.Module):
     """
@@ -245,6 +363,7 @@ class v8DetectionLoss:
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
         self.hyp = h
         self.use_trend_loss_weight=h.use_trend_loss_weight
+        self.bbox_feature_extractor = BBoxFeatureExtractor([64, 128, 256, 384])
         
         self.stride = m.stride  # model strides
         self.nc = m.nc  # number of classes
@@ -317,6 +436,13 @@ class v8DetectionLoss:
         # dfl_conf = pred_distri.view(batch_size, -1, 4, self.reg_max).detach().softmax(-1)
         # dfl_conf = (dfl_conf.amax(-1).mean(-1) + dfl_conf.amax(-1).amin(-1)) / 2
 
+        if "img_metas" in batch:
+            video_names = [img['video_name'] for img in batch["img_metas"]]
+            frame_numbers = [img["frame_number"] for img in batch["img_metas"]]
+            
+        else:
+            video_names = []
+            frame_numbers = []
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
             # pred_scores.detach().sigmoid() * 0.8 + dfl_conf.unsqueeze(-1) * 0.2,
             pred_scores.detach().sigmoid(),
@@ -325,6 +451,8 @@ class v8DetectionLoss:
             gt_labels,
             gt_bboxes,
             mask_gt,
+            video_names,
+            frame_numbers,
         )
 
         target_scores_sum = max(target_scores.sum(), 1)
@@ -339,6 +467,10 @@ class v8DetectionLoss:
             loss[0], loss[2] = self.bbox_loss(
                 pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask, support_bboxes
             )
+            
+        # if hasattr(self, "bbox_feature_extractor"):
+        #     loss_ = self.bbox_feature_extractor(batch, target_bboxes, gt_ids)
+            
 
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.cls  # cls gain
