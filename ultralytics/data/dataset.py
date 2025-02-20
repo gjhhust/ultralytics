@@ -679,17 +679,18 @@ class YOLOVideoDataset(BaseDataset_2):
         np.random.seed(seed)
         random.seed(seed)
         
-    def _train_video(self, hyp):
+    def _train_video(self, hyp, index):
         """Sets bbox loss and builds transformations."""
         # hyp.mosaic = 0.0
         self.transforms = self.build_transforms(hyp) 
-        self.video_sampler_split(self.video_image_dict.copy(), mode="split_random", length=self.data["split_length"][1])
+        LOGGER.info(f"now train dataset convert to split_length: {self.data['split_length'][index]}   mode: split_random")
+        self.video_sampler_split(self.video_image_dict.copy(), mode="split_random", length=self.data["split_length"][index])
 
     def _train_backbone(self, hyp):
         """Sets bbox loss and builds transformations."""
         # hyp.mosaic = 1.0
         self.transforms = self.build_transforms(hyp) 
-        self.video_sampler_split(self.video_image_dict.copy(), mode="split_legnth", length=self.data["split_length"][0])
+        self.video_sampler_split(self.video_image_dict.copy(), mode="split_random", length=self.data["split_length"][0])
 
     def _train_all(self, hyp):
         """Sets bbox loss and builds transformations."""
@@ -873,6 +874,66 @@ class YOLOVideoDataset(BaseDataset_2):
     #     }
     #     # new_batch["cls"] = new_batch["is_moving"]
     #     return new_batch    
+    
+class YOLOVideoONXXDataset(YOLOVideoDataset):
+    """
+
+    Args:
+        data (dict, optional): A dataset YAML dictionary. Defaults to None.
+        use_segments (bool, optional): If True, segmentation masks are used as labels. Defaults to False.
+        use_keypoints (bool, optional): If True, keypoints are used as labels. Defaults to False.
+
+    Returns:
+        (torch.utils.data.Dataset): A PyTorch dataset object that can be used for training an object detection model.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+    def __getitem__(self, index):
+        """Returns transformed label information for given index."""
+        orige_dict = self.get_image_and_label(index)
+        self._set_samevideo_transform(orige_dict["seed"]+self.epoch*10) #Same video in one epoch with consistent random seeds
+        trans_dict = self.transforms(orige_dict.copy())
+        
+        if 'pos_id' in orige_dict:
+            support_dict = self.get_image_and_label(orige_dict['pos_id'])
+            support_trans_dict = self.transforms(support_dict.copy())
+        else:
+            support_trans_dict = trans_dict.copy()
+        # trans_dict['img_ref'] = self.get_ref_img(orige_dict["neg_idx"][0]) #The most recent frame
+        # motion = self._homoDta_preprocess(tensor_numpy(trans_dict["img"]),tensor_numpy(trans_dict['img_ref']))
+        # trans_dict.update(motion)
+
+        
+        # self.show_transforms(orige_dict,trans_dict)
+        trans_dict["index"] = index
+        trans_dict["img_metas"] = orige_dict["img_metas"]
+        trans_dict["support_bboxes"] = support_trans_dict["bboxes"]
+        return trans_dict  
+    
+    def __len__(self):
+        """Returns the length of the labels list for the dataset."""
+        return len(self.labels)
+
+    @staticmethod
+    def collate_fn(batch):
+        """Collates data samples into batches."""
+        new_batch = {}
+        keys = batch[0].keys()
+        values = list(zip(*[list(b.values()) for b in batch]))
+        for i, k in enumerate(keys):
+            value = values[i]
+            if k == "img":
+                value = torch.stack(value, 0)
+            if k in {"masks", "keypoints", "bboxes", "cls", "segments", "obb", 'support_bboxes'}:
+                value = torch.cat(value, 0)
+            new_batch[k] = value
+        new_batch["batch_idx"] = list(new_batch["batch_idx"])
+        for i in range(len(new_batch["batch_idx"])):
+            new_batch["batch_idx"][i] += i  # add target image index for build_targets()
+        new_batch["batch_idx"] = torch.cat(new_batch["batch_idx"], 0)
+        return new_batch
+
         
 class YOLOMultiModalDataset(YOLODataset):
     """

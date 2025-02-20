@@ -516,6 +516,9 @@ class AutoBackend(nn.Module):
         Returns:
             (tuple): Tuple containing the raw output tensor, and processed output for visualization (if visualize=True)
         """
+        if isinstance(im, (list, tuple)):
+            return self.video_forward(im, augment, visualize, embed)
+
         b, ch, h, w = im.shape  # batch, channel, height, width
         if self.fp16 and im.dtype != torch.float16:
             im = im.half()  # to FP16
@@ -707,6 +710,107 @@ class AutoBackend(nn.Module):
         else:
             return self.from_numpy(y)
 
+    def video_forward(self, im, augment=False, visualize=False, embed=None):
+        """
+        Runs inference on the TOLOFT MultiBackend model.
+
+        Args:
+            im (torch.Tensor): The image tensor to perform inference on.
+            augment (bool): whether to perform data augmentation during inference, defaults to False
+            visualize (bool): whether to visualize the output predictions, defaults to False
+            embed (list, optional): A list of feature vectors/embeddings to return.
+
+        Returns:
+            (tuple): Tuple containing the raw output tensor, and processed output for visualization (if visualize=True)
+        """
+        im, fmaps_old = im[0], im[1]  # im = (tensor, tuple of feature maps)
+        b, ch, h, w = im.shape  # batch, channel, height, width
+        if self.fp16 and im.dtype != torch.float16:
+            im = im.half()  # to FP16
+            fmaps_old = [x.half() for x in fmaps_old]  # to FP16
+        if self.nhwc:
+            im = im.permute(0, 2, 3, 1)  # torch BCHW to numpy BHWC shape(1,320,192,3)
+
+        # PyTorch
+        if self.pt or self.nn_module:
+            y = self.model((im, fmaps_old), augment=augment, visualize=visualize, embed=embed)
+            
+        # ONNX Runtime
+        elif self.onnx or self.imx:
+            if self.dynamic:
+                # 动态输入：将输入转换为numpy并运行ONNX推理
+                im = im.cpu().numpy()  # torch转换为numpy
+                fmaps_old = [x.cpu().numpy() for x in fmaps_old]  # 将每个特征图转换为numpy
+
+                # 由于我们使用的是一个元组输入（im, fmaps_old），所以需要为每个输入指定正确的名称
+                inputs = {
+                    self.session.get_inputs()[0].name: im,  # 第一个输入为im
+                    self.session.get_inputs()[1].name: fmaps_old  # 第二个输入为fmaps_old
+                }
+
+                # 运行ONNX推理
+                y = self.session.run(self.output_names, inputs)
+            else:
+                # 静态输入：如果输入不是动态的，则绑定输入并运行推理
+                if not self.cuda:
+                    im = im.cpu()  # 如果不是GPU，则将im移动到CPU
+                # 绑定输入
+                self.io.bind_input(
+                    name="images",  # 输入名称是"images"
+                    device_type=im.device.type,  # 输入设备类型
+                    device_id=im.device.index if im.device.type == "cuda" else 0,  # 输入设备ID
+                    element_type=np.float16 if self.fp16 else np.float32,  # 数据类型
+                    shape=tuple(im.shape),  # 输入的形状
+                    buffer_ptr=im.data_ptr(),  # 数据指针
+                )
+
+                # 绑定特征图
+                for i, fmap in enumerate(fmaps_old):
+                    self.io.bind_input(
+                        name=f"fmap{2-i}",  # 特征图的输入名称是"fmap2", "fmap1", "fmap0"
+                        device_type=fmap.device.type,
+                        device_id=fmap.device.index if fmap.device.type == "cuda" else 0,
+                        element_type=np.float16 if self.fp16 else np.float32,
+                        shape=tuple(fmap.shape),  # 特征图的形状
+                        buffer_ptr=fmap.data_ptr(),  # 特征图的数据指针
+                    )
+
+                # 运行推理
+                self.session.run_with_iobinding(self.io)
+                y = self.bindings
+        
+            # if self.dynamic:
+            #     im = im.cpu().numpy()  # torch to numpy
+            #     y = self.session.run(self.output_names, {self.session.get_inputs()[0].name: im})
+            # else:
+            #     if not self.cuda:
+            #         im = im.cpu()
+            #     self.io.bind_input(
+            #         name="images",
+            #         device_type=im.device.type,
+            #         device_id=im.device.index if im.device.type == "cuda" else 0,
+            #         element_type=np.float16 if self.fp16 else np.float32,
+            #         shape=tuple(im.shape),
+            #         buffer_ptr=im.data_ptr(),
+            #     )
+            #     self.session.run_with_iobinding(self.io)
+            #     y = self.bindings
+            if self.imx:
+                # boxes, conf, cls
+                y = np.concatenate([y[0], y[1][:, :, None], y[2][:, :, None]], axis=-1)
+
+        # for x in y:
+        #     print(type(x), len(x)) if isinstance(x, (list, tuple)) else print(type(x), x.shape)  # debug shapes
+        if isinstance(y, (list, tuple)):
+            if len(self.names) == 999 and (self.task == "segment" or len(y) == 2):  # segments and names not defined
+                nc = y[0].shape[1] - y[1].shape[1] - 4  # y = (1, 32, 160, 160), (1, 116, 8400)
+                self.names = {i: f"class{i}" for i in range(nc)}
+            if len(y) == 2 and isinstance(y[1], (list, tuple)):
+                return self.from_numpy(y[0]), [self.from_numpy(x) for x in y[1]]
+            return self.from_numpy(y[0]) if len(y) == 1 else [self.from_numpy(x) for x in y]
+        else:
+            return self.from_numpy(y)
+        
     def from_numpy(self, x):
         """
         Convert a numpy array to a tensor.

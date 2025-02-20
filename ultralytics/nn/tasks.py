@@ -16,6 +16,7 @@ from ultralytics.nn.modules import (
     C2,
     C2PSA,
     C3,
+    C2f_DCNV3,
     C3TR,
     ELAN1,
     OBB,
@@ -28,6 +29,7 @@ from ultralytics.nn.modules import (
     Bottleneck,
     BottleneckCSP,
     C2f,
+    C2f_ODConv,
     C2fAttn,
     C2fCIB,
     C2fPSA,
@@ -62,7 +64,11 @@ from ultralytics.nn.modules import (
     WorldDetect,
     v10Detect,
     List_Split,
+    InputData,
     MSTF_STREAM,
+    MSTF_STREAM_cbam,
+    MSTF_STREAM_cbam_Focus,
+    MSTF_STREAM_cbam_Focus_EPOCH2,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -335,7 +341,7 @@ class DetectionModel(BaseModel):
                     return self.forward(x)["one2many"]
                 return self.forward(x)[0] if isinstance(m, (Segment, Pose, OBB)) else self.forward(x)
 
-            m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(1, ch, s, s))])  # forward
+            m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(2, ch, s, s))])  # forward
             self.stride = m.stride
             m.bias_init()  # only run once
         else:
@@ -390,6 +396,187 @@ class DetectionModel(BaseModel):
         """Initialize the loss criterion for the DetectionModel."""
         return E2EDetectLoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
 
+class VideoDetectionModel(BaseModel):
+    """YOLOv8 detection model."""
+
+    def __init__(self, cfg="yolov8n.yaml", ch=3, nc=None, verbose=True):  # model, input channels, number of classes
+        """Initialize the YOLOv8 detection model with the given config and parameters."""
+        super().__init__()
+        self.yaml = cfg if isinstance(cfg, dict) else yaml_model_load(cfg)  # cfg dict
+        if self.yaml["backbone"][0][2] == "Silence":
+            LOGGER.warning(
+                "WARNING ⚠️ YOLOv9 `Silence` module is deprecated in favor of nn.Identity. "
+                "Please delete local *.pt file and re-download the latest model checkpoint."
+            )
+            self.yaml["backbone"][0][2] = "nn.Identity"
+
+        # Define model
+        ch = self.yaml["ch"] = self.yaml.get("ch", ch)  # input channels
+        if nc and nc != self.yaml["nc"]:
+            LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
+            self.yaml["nc"] = nc  # override YAML value
+        self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
+        self.names = {i: f"{i}" for i in range(self.yaml["nc"])}  # default names dict
+        self.inplace = self.yaml.get("inplace", True)
+        self.end2end = getattr(self.model[-1], "end2end", False)
+
+        # Build strides
+        m = self.model[-1]  # Detect()
+        if isinstance(m, Detect):  # includes all Detect subclasses like Segment, Pose, OBB, WorldDetect
+            s = 512  # 2x min stride
+            m.inplace = self.inplace
+
+            def _forward(x):
+                """Performs a forward pass through the model, handling different Detect subclass types accordingly."""
+                if self.end2end:
+                    return self.forward(x)["one2many"]
+                return self.forward(x)[0]
+
+            m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(2, ch, s, s))])  # forward
+            self.stride = m.stride
+            m.bias_init()  # only run once
+        else:
+            self.stride = torch.Tensor([32])  # default stride for i.e. RTDETR
+
+        # Init weights, biases
+        initialize_weights(self)
+        if verbose:
+            self.info()
+            LOGGER.info("")
+
+
+    def loss(self, batch, preds=None):
+        """
+        Compute loss.
+
+        Args:
+            batch (dict): Batch to compute loss on
+            preds (torch.Tensor | List[torch.Tensor]): Predictions.
+        """
+        if getattr(self, "criterion", None) is None:
+            self.criterion = self.init_criterion()
+
+        preds = self.forward(batch["input"]) if preds is None else preds
+        
+        if len(preds) == 2:
+            preds, return_fmaps = preds
+            return self.criterion(preds, batch), return_fmaps
+        else:
+            return self.criterion(preds, batch), None
+    
+    def forward(self, x, *args, **kwargs):
+        """
+        Perform forward pass of the model for either training or inference.
+
+        If x is a dict, calculates and returns the loss for training. Otherwise, returns predictions for inference.
+
+        Args:
+            x (torch.Tensor | dict): Input tensor for inference, or dict with image tensor and labels for training.
+            *args (Any): Variable length argument list.
+            **kwargs (Any): Arbitrary keyword arguments.
+
+        Returns:
+            (torch.Tensor): Loss if x is a dict (training), or network predictions (inference).
+        """
+        if isinstance(x, dict):  # for cases of training and validating while training.
+            return self.loss(x, *args, **kwargs)
+        if isinstance(x, (list, tuple)) and len(x) == 2:
+            self.predict(x[0], *x[1])
+        return self.predict(x, *args, **kwargs)
+    
+    # def predict(self, x, profile=False, visualize=False, augment=False, embed=None):
+    def predict(self, x, fmap2=None, fmap1=None, fmap0=None, profile=False, visualize=False, augment=False, embed=None):
+        """
+        Perform a forward pass through the network.
+
+        Args:
+            x (torch.Tensor): The input tensor to the model.
+            profile (bool):  Print the computation time of each layer if True, defaults to False.
+            visualize (bool): Save the feature maps of the model if True, defaults to False.
+            augment (bool): Augment image during prediction, defaults to False.
+            embed (list, optional): A list of feature vectors/embeddings to return.
+
+        Returns:
+            (torch.Tensor): The last output of the model.
+        """
+        if fmap2 is not None:
+            x = (x, (fmap2, fmap1, fmap0))
+        if augment:
+            return self._predict_augment(x)
+        return self._predict_once(x, profile, visualize, embed)
+
+    def _predict_augment(self, x):
+        """Perform augmentations on input image x and return augmented inference and train outputs."""
+        if getattr(self, "end2end", False) or self.__class__.__name__ != "DetectionModel":
+            LOGGER.warning("WARNING ⚠️ Model does not support 'augment=True', reverting to single-scale prediction.")
+            return self._predict_once(x)
+        img_size = x.shape[-2:]  # height, width
+        s = [1, 0.83, 0.67]  # scales
+        f = [None, 3, None]  # flips (2-ud, 3-lr)
+        y = []  # outputs
+        for si, fi in zip(s, f):
+            xi = scale_img(x.flip(fi) if fi else x, si, gs=int(self.stride.max()))
+            yi = super().predict(xi)[0]  # forward
+            yi = self._descale_pred(yi, fi, si, img_size)
+            y.append(yi)
+        y = self._clip_augmented(y)  # clip augmented tails
+        return torch.cat(y, -1), None  # augmented inference, train
+    
+    def _predict_once(self, x, profile=False, visualize=False, embed=None):
+        """
+        Perform a forward pass through the network.
+
+        Args:
+            x (torch.Tensor): The input tensor to the model.
+            profile (bool):  Print the computation time of each layer if True, defaults to False.
+            visualize (bool): Save the feature maps of the model if True, defaults to False.
+            embed (list, optional): A list of feature vectors/embeddings to return.
+            return_fmaps_id(int, optional): A list of layer indices to return feature maps for as buffers.
+
+        Returns:
+            (torch.Tensor): The last output of the model.
+        """
+        y, dt, embeddings = [], [], []  # outputs
+        for m in self.model:
+            if m.f != -1:  # if not from previous layer
+                x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
+            if profile:
+                self._profile_one_layer(m, x, dt)
+            x = m(x)  # run
+            y.append(x if m.i in self.save else None)  # save output
+            if visualize:
+                feature_visualization(x, m.type, m.i, save_dir=visualize)
+            if embed and m.i in embed:
+                embeddings.append(nn.functional.adaptive_avg_pool2d(x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
+                if m.i == max(embed):
+                    return torch.unbind(torch.cat(embeddings, 1), dim=0)
+        return x, [f.detach() for f in y[13]]  # return output
+    
+    @staticmethod
+    def _descale_pred(p, flips, scale, img_size, dim=1):
+        """De-scale predictions following augmented inference (inverse operation)."""
+        p[:, :4] /= scale  # de-scale
+        x, y, wh, cls = p.split((1, 1, 2, p.shape[dim] - 4), dim)
+        if flips == 2:
+            y = img_size[0] - y  # de-flip ud
+        elif flips == 3:
+            x = img_size[1] - x  # de-flip lr
+        return torch.cat((x, y, wh, cls), dim)
+
+    def _clip_augmented(self, y):
+        """Clip YOLO augmented inference tails."""
+        nl = self.model[-1].nl  # number of detection layers (P3-P5)
+        g = sum(4**x for x in range(nl))  # grid points
+        e = 1  # exclude layer count
+        i = (y[0].shape[-1] // g) * sum(4**x for x in range(e))  # indices
+        y[0] = y[0][..., :-i]  # large
+        i = (y[-1].shape[-1] // g) * sum(4 ** (nl - 1 - x) for x in range(e))  # indices
+        y[-1] = y[-1][..., i:]  # small
+        return y
+
+    def init_criterion(self):
+        """Initialize the loss criterion for the DetectionModel."""
+        return E2EDetectLoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
 
 class OBBModel(DetectionModel):
     """YOLOv8 Oriented Bounding Box (OBB) model."""
@@ -982,6 +1169,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C1,
             C2,
             C2f,
+            C2f_DCNV3,
+            C2f_ODConv,
             C3k2,
             RepNCSPELAN4,
             ELAN1,
@@ -1015,6 +1204,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 C1,
                 C2,
                 C2f,
+                C2f_DCNV3,
+                C2f_ODConv,
                 C3k2,
                 C2fAttn,
                 C3,
@@ -1048,6 +1239,9 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c2 = sum(ch[x] for x in f)
         elif m is List_Split:
             c2 = ch[f][args[0]]
+        elif m is InputData:
+            c2 = args
+            args = []
         elif m in {Detect, WorldDetect, Segment, Pose, OBB, ImagePoolingAttn, v10Detect}:
             args.append([ch[x] for x in f])
             if m is Segment:
@@ -1062,9 +1256,13 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             args = [c1, c2, *args[1:]]
         elif m is CBFuse:
             c2 = ch[f[-1]]
-        elif m is MSTF_STREAM:
+        elif m in (MSTF_STREAM, MSTF_STREAM_cbam_Focus, MSTF_STREAM_cbam_Focus_EPOCH2):
             c1 = [ch[f_] for f_ in f]
             c2 = c1
+            args.insert(0, c1)
+        elif m in (MSTF_STREAM_cbam,):
+            c1 = [ch[f_] for f_ in f]
+            c2 = c1[1:]
             args.insert(0, c1)
         else:
             c2 = ch[f]
