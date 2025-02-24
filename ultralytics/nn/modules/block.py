@@ -1199,25 +1199,21 @@ class C3_wise(nn.Module):
         """Forward pass through the CSP bottleneck with 2 convolutions."""
         return self.cv3(torch.cat((self.m(self.cv1(x)), self.cv2(x)), 1))
     
+
 class MSTF_STREAM(nn.Module): #
-    def __init__(self, in_channels, epoch_train=0, depth=1.0,
+    def __init__(self, in_channels, depth=1.0,
         width=1.0, n_levels=3, depthwise=False,
         act=nn.SiLU(),):
-        '''
-        input_dim  dim of the backbone features.
-        hidden_dim Memorizing hidden and input layers
-        n_levels Number of multi-scale feature maps
-        epoch_train start fused 
-        iter_max Number of iterations
-        '''
         super(MSTF_STREAM, self).__init__()
         self.in_channels = in_channels
-        self.epoch_train = epoch_train
-        # buffer
-        self.buffer = StreamBuffer("MemoryAtten", number_feature=n_levels)
+        assert len(in_channels)-1 == n_levels, "features number must be equal to n_levels"
+        assert in_channels[0] == in_channels[1:], f"input last feature dims must equal to now feature dims, plase set InputData:[f{in_channels[1:]}]"
+        in_channels = in_channels[1:]
+        # # buffer
+        # self.buffer = StreamBuffer("MemoryAtten", number_feature=n_levels)
         
         conv = DWConv if depthwise else Conv
-
+        
         self.lateral_conv0 = conv(
             int(in_channels[2] * width), int(in_channels[1] * width), 1, 1, act=act
         )
@@ -1264,30 +1260,36 @@ class MSTF_STREAM(nn.Module): #
             depthwise=depthwise,
         )
 
-        self.jian2 = conv(
-                    int(in_channels[0] * width),
-                    int(in_channels[0] * width) // 2,
-                    k=1,
-                    s=1,
-                    act=act,
-                )
+        self.jian2 = nn.Sequential(
+            conv(
+                int(in_channels[0] * width),
+                int(in_channels[0] * width) // 2,
+                k=1,
+                s=1,
+                act=act,
+            )  # 添加 conv 模块
+        )
 
-        self.jian1 = conv(
+        self.jian1 = nn.Sequential(
+            conv(
             int(in_channels[1] * width),
             int(in_channels[1] * width) // 2,
                     k=1,
                     s=1,
                     act=act,
                 )
-
-        self.jian0 = conv(
+        )
+        
+        self.jian0 = nn.Sequential(
+            conv(
             int(in_channels[2] * width),
             int(in_channels[2] * width) // 2,
                     k=1,
                     s=1,
                     act=act,
-                )
-        self.img_metas = None
+            )
+        )
+        
     
     def forward(self, x):
         """
@@ -1298,12 +1300,14 @@ class MSTF_STREAM(nn.Module): #
             Tuple[Tensor]: FPN feature.
         """
         # self.plot = True
-        img_metas = self.img_metas
-        fmaps_new = x  #3,B,C,H,W The incoming scale must be from large to small
+        fmaps_old = x[0]  
+        fmaps_new = x[1:]  #3,B,C,H,W The incoming scale must be from large to small
+        if fmaps_old == [None, None, None]:
+            fmaps_old = [f.clone() for f in fmaps_new]
+        else:
+            fmaps_old = [fmap.permute(0, 3, 1, 2) for fmap in fmaps_old]
         
-        if self.img_metas is None:
-            return x
-        
+        [fmap2, fmap1, fmap0] = fmaps_old
         [rurrent_x2, rurrent_x1, rurrent_x0] = fmaps_new
 
         rurrent_fpn_out0 = self.lateral_conv0(rurrent_x0)  # 1/8->1/8
@@ -1324,23 +1328,14 @@ class MSTF_STREAM(nn.Module): #
         rurrent_p_out0 = torch.cat([rurrent_p_out0, rurrent_fpn_out0], 1)  # 512->1024/32
         rurrent_pan_out0 = self.C3_n4(rurrent_p_out0)  # 1024->1024/32
 
-    
-        result_first_frame, fmaps_old = self.buffer.update_memory([rurrent_pan_out2,rurrent_pan_out1,rurrent_pan_out0], img_metas)
-        
-        [support_pan_out2, support_pan_out1, support_pan_out0] = fmaps_old
+        # result_first_frame, fmaps_old = self.buffer.update_memory([rurrent_pan_out2,rurrent_pan_out1,rurrent_pan_out0], img_metas)
         
         # 融合
-                
-        pan_out2 = torch.cat([self.jian2(rurrent_pan_out2), self.jian2(support_pan_out2)], dim=1) + rurrent_x2
-        pan_out1 = torch.cat([self.jian1(rurrent_pan_out1), self.jian1(support_pan_out1)], dim=1) + rurrent_x1
-        pan_out0 = torch.cat([self.jian0(rurrent_pan_out0), self.jian0(support_pan_out0)], dim=1) + rurrent_x0
-
-            # pan_out2 = torch.cat([self.jian2(rurrent_pan_out2), self.jian2(support_pan_out2)], dim=1) + rurrent_pan_out2
-            # pan_out1 = torch.cat([self.jian1(rurrent_pan_out1), self.jian1(support_pan_out1)], dim=1) + rurrent_pan_out1
-            # pan_out0 = torch.cat([self.jian0(rurrent_pan_out0), self.jian0(support_pan_out0)], dim=1) + rurrent_pan_out0
+        pan_out2 = torch.cat([self.jian2(rurrent_pan_out2), self.jian2(fmap2)], dim=1) + rurrent_x2
+        pan_out1 = torch.cat([self.jian1(rurrent_pan_out1), self.jian1(fmap1)], dim=1) + rurrent_x1
+        pan_out0 = torch.cat([self.jian0(rurrent_pan_out0), self.jian0(fmap0)], dim=1) + rurrent_x0
         
         return [pan_out2, pan_out1, pan_out0]
-
 
 from ultralytics.nn.modules.conv import CBAM
 
@@ -1483,214 +1478,3 @@ class MSTF_STREAM_cbam(nn.Module): #
         
         return [pan_out2, pan_out1, pan_out0]
 
-class MSTF_STREAM_cbam_Focus(nn.Module): #
-    def __init__(self, in_channels, epoch_train=0, depth=1.0,
-        width=1.0, n_levels=3, depthwise= False,
-        act=nn.SiLU(),):
-        '''
-        input_dim  dim of the backbone features.
-        hidden_dim Memorizing hidden and input layers
-        n_levels Number of multi-scale feature maps
-        epoch_train start fused 
-        iter_max Number of iterations
-        '''
-        super(MSTF_STREAM_cbam_Focus, self).__init__()
-        self.in_channels = in_channels
-        self.epoch_train = epoch_train
-        # buffer
-        self.buffer = StreamBuffer("MemoryAtten", number_feature=n_levels)
-        
-        conv = DWConv if depthwise else Focus
-        
-        self.lateral_conv0 = conv(
-            int(in_channels[2] * width), int(in_channels[1] * width), 1, 1, act=act
-        )
-        self.C3_p4 = C3_wise(
-            int(2 * in_channels[1] * width),
-            int(in_channels[1] * width),
-            round(3 * depth),
-            False,
-            depthwise=depthwise,
-        )  # cat
-
-        self.reduce_conv1 = conv(
-            int(in_channels[1] * width), int(in_channels[0] * width), 1, 1, act=act
-        )
-        self.C3_p3 = C3_wise(
-            int(2 * in_channels[0] * width),
-            int(in_channels[0] * width),
-            round(3 * depth),
-            False,
-            depthwise=depthwise,
-        )
-
-        # bottom-up conv
-        self.bu_conv2 = conv(
-            int(in_channels[0] * width), int(in_channels[0] * width), 3, 2, act=act
-        )
-        self.C3_n3 = C3_wise(
-            int(2 * in_channels[0] * width),
-            int(in_channels[1] * width),
-            round(3 * depth),
-            False,
-            depthwise=depthwise,
-        )
-
-        # bottom-up conv
-        self.bu_conv1 = conv(
-            int(in_channels[1] * width), int(in_channels[1] * width), 3, 2, act=act
-        )
-        self.C3_n4 = C3_wise(
-            int(2 * in_channels[1] * width),
-            int(in_channels[2] * width),
-            round(3 * depth),
-            False,
-            depthwise=depthwise,
-        )
-
-        self.jian2 = nn.ModuleList([
-            CBAM(int(in_channels[0] * width), kernel_size=7),  # 添加 CBAM 模块
-            conv(
-                int(in_channels[0] * width),
-                int(in_channels[0] * width) // 2,
-                k=1,
-                s=1,
-                act=act,
-            )  # 添加 conv 模块
-        ])
-
-        self.jian1 = nn.ModuleList([
-            CBAM(int(in_channels[1] * width), kernel_size=7),  # 添加 CBAM 模块
-            conv(
-            int(in_channels[1] * width),
-            int(in_channels[1] * width) // 2,
-                    k=1,
-                    s=1,
-                    act=act,
-                )
-        ])
-        
-
-        self.jian0 = nn.ModuleList([
-            CBAM(int(in_channels[2] * width), kernel_size=7),  # 添加 CBAM 模块
-            conv(
-            int(in_channels[2] * width),
-            int(in_channels[2] * width) // 2,
-                    k=1,
-                    s=1,
-                    act=act,
-            )
-        ])
-        
-        self.img_metas = None
-    
-    def forward(self, x):
-        """
-        Args:
-            inputs: input images.
-
-        Returns:
-            Tuple[Tensor]: FPN feature.
-        """
-        # self.plot = True
-        img_metas = self.img_metas
-        fmaps_new = x  #3,B,C,H,W The incoming scale must be from large to small
-        
-        if self.img_metas is None:
-            return x
-        
-        [rurrent_x2, rurrent_x1, rurrent_x0] = fmaps_new
-
-        rurrent_fpn_out0 = self.lateral_conv0(rurrent_x0)  # 1024->512/32
-        rurrent_f_out0 = F.interpolate(rurrent_fpn_out0, size=rurrent_x1.shape[2:4], mode='nearest')  # 512/16
-        rurrent_f_out0 = torch.cat([rurrent_f_out0, rurrent_x1], 1)  # 512->1024/16
-        rurrent_f_out0 = self.C3_p4(rurrent_f_out0)  # 1024->512/16
-
-        rurrent_fpn_out1 = self.reduce_conv1(rurrent_f_out0)  # 512->256/16
-        rurrent_f_out1 = F.interpolate(rurrent_fpn_out1, size=rurrent_x2.shape[2:4], mode='nearest')  # 256/8
-        rurrent_f_out1 = torch.cat([rurrent_f_out1, rurrent_x2], 1)  # 256->512/8
-        rurrent_pan_out2 = self.C3_p3(rurrent_f_out1)  # 512->256/8
-
-        rurrent_p_out1 = self.bu_conv2(rurrent_pan_out2)  # 256->256/16
-        rurrent_p_out1 = torch.cat([rurrent_p_out1, rurrent_fpn_out1], 1)  # 256->512/16
-        rurrent_pan_out1 = self.C3_n3(rurrent_p_out1)  # 512->512/16
-
-        rurrent_p_out0 = self.bu_conv1(rurrent_pan_out1)  # 512->512/32
-        rurrent_p_out0 = torch.cat([rurrent_p_out0, rurrent_fpn_out0], 1)  # 512->1024/32
-        rurrent_pan_out0 = self.C3_n4(rurrent_p_out0)  # 1024->1024/32
-
-    
-        result_first_frame, fmaps_old = self.buffer.update_memory([rurrent_pan_out2,rurrent_pan_out1,rurrent_pan_out0], img_metas)
-        
-        [support_pan_out2, support_pan_out1, support_pan_out0] = fmaps_old
-        
-        # 融合
-                
-        # if fmaps_new[0].device.type == "cpu" or (img_metas[0]["epoch"] < self.epoch_train and self.training):
-        #     pan_out2 = torch.cat([self.jian2(rurrent_pan_out2), self.jian2(support_pan_out2)], dim=1) + rurrent_x2
-        #     pan_out1 = torch.cat([self.jian1(rurrent_pan_out1), self.jian1(support_pan_out1)], dim=1) + rurrent_x1
-        #     pan_out0 = torch.cat([self.jian0(rurrent_pan_out0), self.jian0(support_pan_out0)], dim=1) + rurrent_x0
-        # else:
-        pan_out2 = torch.cat([self.jian2(rurrent_pan_out2), self.jian2(support_pan_out2)], dim=1) + rurrent_pan_out2
-        pan_out1 = torch.cat([self.jian1(rurrent_pan_out1), self.jian1(support_pan_out1)], dim=1) + rurrent_pan_out1
-        pan_out0 = torch.cat([self.jian0(rurrent_pan_out0), self.jian0(support_pan_out0)], dim=1) + rurrent_pan_out0
-        
-        return [pan_out2, pan_out1, pan_out0]
-    
-    
-class MSTF_STREAM_cbam_Focus_EPOCH2(MSTF_STREAM_cbam_Focus): #
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-    
-    def forward(self, x):
-        """
-        Args:
-            inputs: input images.
-
-        Returns:
-            Tuple[Tensor]: FPN feature.
-        """
-        # self.plot = True
-        img_metas = self.img_metas
-        fmaps_new = x  #3,B,C,H,W The incoming scale must be from large to small
-        
-        if self.img_metas is None:
-            return x
-        
-        [rurrent_x2, rurrent_x1, rurrent_x0] = fmaps_new
-
-        rurrent_fpn_out0 = self.lateral_conv0(rurrent_x0)  # 1024->512/32
-        rurrent_f_out0 = F.interpolate(rurrent_fpn_out0, size=rurrent_x1.shape[2:4], mode='nearest')  # 512/16
-        rurrent_f_out0 = torch.cat([rurrent_f_out0, rurrent_x1], 1)  # 512->1024/16
-        rurrent_f_out0 = self.C3_p4(rurrent_f_out0)  # 1024->512/16
-
-        rurrent_fpn_out1 = self.reduce_conv1(rurrent_f_out0)  # 512->256/16
-        rurrent_f_out1 = F.interpolate(rurrent_fpn_out1, size=rurrent_x2.shape[2:4], mode='nearest')  # 256/8
-        rurrent_f_out1 = torch.cat([rurrent_f_out1, rurrent_x2], 1)  # 256->512/8
-        rurrent_pan_out2 = self.C3_p3(rurrent_f_out1)  # 512->256/8
-
-        rurrent_p_out1 = self.bu_conv2(rurrent_pan_out2)  # 256->256/16
-        rurrent_p_out1 = torch.cat([rurrent_p_out1, rurrent_fpn_out1], 1)  # 256->512/16
-        rurrent_pan_out1 = self.C3_n3(rurrent_p_out1)  # 512->512/16
-
-        rurrent_p_out0 = self.bu_conv1(rurrent_pan_out1)  # 512->512/32
-        rurrent_p_out0 = torch.cat([rurrent_p_out0, rurrent_fpn_out0], 1)  # 512->1024/32
-        rurrent_pan_out0 = self.C3_n4(rurrent_p_out0)  # 1024->1024/32
-
-    
-        result_first_frame, fmaps_old = self.buffer.update_memory([rurrent_pan_out2,rurrent_pan_out1,rurrent_pan_out0], img_metas)
-        
-        [support_pan_out2, support_pan_out1, support_pan_out0] = fmaps_old
-        
-        # 融合
-                
-        if fmaps_new[0].device.type == "cpu" or (img_metas[0]["epoch"] < self.epoch_train and self.training):
-            pan_out2 = torch.cat([self.jian2(rurrent_pan_out2), self.jian2(support_pan_out2)], dim=1) + rurrent_x2
-            pan_out1 = torch.cat([self.jian1(rurrent_pan_out1), self.jian1(support_pan_out1)], dim=1) + rurrent_x1
-            pan_out0 = torch.cat([self.jian0(rurrent_pan_out0), self.jian0(support_pan_out0)], dim=1) + rurrent_x0
-        else:
-            pan_out2 = torch.cat([self.jian2(rurrent_pan_out2), self.jian2(support_pan_out2)], dim=1) + rurrent_pan_out2
-            pan_out1 = torch.cat([self.jian1(rurrent_pan_out1), self.jian1(support_pan_out1)], dim=1) + rurrent_pan_out1
-            pan_out0 = torch.cat([self.jian0(rurrent_pan_out0), self.jian0(support_pan_out0)], dim=1) + rurrent_pan_out0
-        
-        return [pan_out2, pan_out1, pan_out0]

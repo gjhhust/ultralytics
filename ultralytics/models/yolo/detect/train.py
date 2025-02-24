@@ -15,7 +15,7 @@ from ultralytics.nn.tasks import DetectionModel
 from ultralytics.utils import LOGGER, RANK
 from ultralytics.utils.plotting import plot_images, plot_labels, plot_results, plot_video
 from ultralytics.utils.torch_utils import de_parallel, torch_distributed_zero_first
-from ultralytics.nn.modules import MSTF_STREAM, MSTF_STREAM_cbam, MSTF_STREAM_cbam_Focus
+from ultralytics.nn.modules import MSTF_STREAM, MSTF_STREAM_cbam
 import warnings
 from copy import copy
 
@@ -204,11 +204,6 @@ class DetectionTrainer(BaseTrainer):
                 # Forward
                 with autocast(self.amp):
                     batch = self.preprocess_batch(batch)
-                    if datasampler == "streamSampler":
-                        model_to_check = self.model.module if hasattr(self.model, 'module') else self.model
-                        for m in model_to_check.model:
-                            if type(m) in (MSTF_STREAM, MSTF_STREAM_cbam,MSTF_STREAM_cbam_Focus):  # set plot params
-                                m.img_metas = batch["img_metas"]
      
                     self.loss, self.loss_items = self.model(batch)
                     if RANK != -1:

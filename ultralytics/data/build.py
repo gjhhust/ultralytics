@@ -119,7 +119,72 @@ class StreamSampler(DistributedSampler):
 
     def __len__(self):
         return self.data_length
-    
+
+import torch
+import random
+from torch.utils.data import Sampler
+import torch.distributed as dist
+
+class StreamSampler(Sampler):
+    '''
+    Streaming Sampling Datasets from Video
+    '''
+    def __init__(self, dataset, batch_size, seed=10, distributed=False):
+        # Check if distributed mode is enabled and process group is already initialized
+        self.dataset = dataset  # self.sub_videos
+        self.batch_size = batch_size
+        self.seed = seed
+        self.epoch = 0
+        self.distributed = distributed
+        
+        if distributed:
+            self.rank = dist.get_rank()  # Get the rank of the current process
+            self.world_size = dist.get_world_size()  # Get the total number of processes
+        else:
+            self.rank = 0
+            self.world_size = 1
+        
+    def __iter__(self):
+        # Generate indices for sub-videos (each sub-video is a list of frames)
+        indices = list(range(len(self.dataset.sampler_indices[self.rank])))
+        
+        # Shuffle if needed (for training)
+        if self.seed is not None:
+            rng = random.Random(self.seed + self.epoch)
+            rng.shuffle(self.dataset.videos_info)
+        
+        self.data_length = len(indices) // self.batch_size
+        yiled_indices = np.array(indices).reshape((self.batch_size, self.data_length)).T.flatten()
+        # Batch alignment: ensure each batch contains 'batch_size' sub-videos, and each sub-video has one frame
+        assert (len(indices) % self.batch_size) == 0, "Number of sub-videos is not divisible by batch size"
+        
+        if self.dataset.augment:
+            assert (len(indices)//self.batch_size) % self.dataset.length == 0, "Number of sub-videos is not divisible by batch size"
+                
+        for i in yiled_indices:
+            yield i
+
+    def set_epoch(self, epoch):
+        self.epoch = epoch
+
+    def __len__(self):
+        return self.data_length  # Number of batches
+
+    def _epoch_reset(self):
+        '''
+        Reset for a new epoch: re-calculate the video frame indices and re-shuffle the dataset.
+        This is necessary when the sub-video divisions change.
+        '''
+        # Recalculate the video frame indices if necessary (if you modified all_sub_videos)
+        self.video_frame_indices = self.dataset._get_video_frame_indices()
+
+        # Reset any other internal state as needed
+        self.seed += 1  # Optionally increment the seed for the next epoch
+        self.epoch += 1  # Increment the epoch
+        self.set_epoch(self.epoch)  # Update the epoch in the distributed sampler
+
+
+
 class InfiniteDataLoader(dataloader.DataLoader):
     """
     Dataloader that reuses workers.

@@ -4,7 +4,7 @@
 task: detect # (str) YOLO task, i.e. detect, segment, classify, pose, obb
 mode: train # (str) YOLO mode, i.e. train, val, predict, export, track, benchmark
 
-train_slit: 4 #片段划分
+train_slit: [0,2,20]
 use_trend_loss_weight: False
 
 # Train settings -------------------------------------------------------------------------------------------------------
