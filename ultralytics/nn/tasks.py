@@ -67,8 +67,6 @@ from ultralytics.nn.modules import (
     InputData,
     MSTF_STREAM,
     MSTF_STREAM_cbam,
-    MSTF_STREAM_cbam_Focus,
-    MSTF_STREAM_cbam_Focus_EPOCH2,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -550,7 +548,7 @@ class VideoDetectionModel(BaseModel):
                 embeddings.append(nn.functional.adaptive_avg_pool2d(x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
                 if m.i == max(embed):
                     return torch.unbind(torch.cat(embeddings, 1), dim=0)
-        return x, [f.detach() for f in y[13]]  # return output
+        return x, [f.permute(0, 2, 3, 1) for f in y[13]]  # return output
     
     @staticmethod
     def _descale_pred(p, flips, scale, img_size, dim=1):
@@ -1256,11 +1254,11 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             args = [c1, c2, *args[1:]]
         elif m is CBFuse:
             c2 = ch[f[-1]]
-        elif m in (MSTF_STREAM, MSTF_STREAM_cbam_Focus, MSTF_STREAM_cbam_Focus_EPOCH2):
-            c1 = [ch[f_] for f_ in f]
-            c2 = c1
-            args.insert(0, c1)
-        elif m in (MSTF_STREAM_cbam,):
+        # elif m in (MSTF_STREAM):
+        #     c1 = [ch[f_] for f_ in f]
+        #     c2 = c1
+        #     args.insert(0, c1)
+        elif m in (MSTF_STREAM_cbam,MSTF_STREAM):
             c1 = [ch[f_] for f_ in f]
             c2 = c1[1:]
             args.insert(0, c1)

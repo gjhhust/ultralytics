@@ -265,6 +265,7 @@ def combine_unique_folders(paths):
     combined_string = '_'.join(unique_folder_names)
     return os.path.join(list(paths)[0],combined_string)
 
+
 class YOLOVideoDataset(BaseDataset_2):
     """
 
@@ -286,8 +287,460 @@ class YOLOVideoDataset(BaseDataset_2):
         super().__init__(*args, **kwargs)
         self.match_number = self.data["match_number"]
         self.interval = self.data["interval"]
+        self.split_mode = self.data["split_mode"]
+        self.interval_mode = self.data["interval_mode"]
+        
+        if dist.is_initialized():
+            self.world_size = dist.get_world_size()
+            self.rank = dist.get_rank()
+        else:
+            self.world_size = 1
+            self.rank = 0
+            
+        self.im_frame_matching(self.im_files)
+        
+        self.length = -1
+        self.epoch = 0
+        self.sub_videos, self.sub_videos_mapping, self.sampler_indices  = self.split_sub_videos(self.interval, 10, self.world_size, is_training = self.augment)
+    
+    def im_frame_matching(self, im_files):
+        # Create a dictionary that groups images by video name
+        video_image_dict = {}
+        self.videos_info = []
+        
+        for i, image_path in enumerate(im_files):
+            video_name = os.path.basename(os.path.dirname(image_path))
+            image_name = os.path.splitext(os.path.basename(image_path))[0]
+            frame_num_string = image_name.split('_')[-1]  # Assuming the video name is the first part of the filename separated by '_'
+            # Extract numeric parts using regular expressions
+            match = re.search(r'\d+', frame_num_string)
+            digits = match.group()
+            frame_num = int(digits)
+            
+            # Group images by video name
+            if video_name not in video_image_dict:
+                video_image_dict[video_name] = []
+            video_image_dict[video_name].append({'img_file': image_path, 'frame_number': frame_num, "index":i, "video_name":video_name})
+        
+        # Now organize the total video information into self.videos
+        for video_name, frames in video_image_dict.items():
+            video_info = {
+                'video_name': video_name,
+                'frames': sorted(frames, key=lambda x: x['frame_number'])  # Sort frames by frame number
+            }
+            self.videos_info.append(video_info)
+        
+        return self.videos_info
+
+    def split_sub_videos(self, interval, length, gpu_count, is_training=False):
+        # Split video based on the specified interval_mode
+        all_sub_videos = []
+
+        self.length = length if is_training else -1
+        # If validation mode, just output original videos
+        if not is_training:
+            for video_info in self.videos_info:
+                frames = []
+                for i, frame_info in enumerate(video_info['frames']):
+                    frame_info["sub_frame_number"] = i
+                    frames.append(frame_info)
+                all_sub_videos.append(frames)    
+            # all_sub_videos = all_sub_videos[:10]
+            
+            self.sub_videos = all_sub_videos
+            sub_videos_mapping, sampler_indices = self._precompute_index_mapping(all_sub_videos, is_training)
+            return self.sub_videos, sub_videos_mapping, sampler_indices
+
+        if length == -1:
+            length = min([len(video_info['frames']) for video_info in self.videos_info])
+            self.length = length
+        
+        # Sampling sub-videos based on interval_mode
+        for video_info in self.videos_info:
+            frames = video_info['frames']
+            sampled_frames = []
+
+            if self.interval_mode == 'all':
+                # All frames sampled in interval steps
+                for i in range(0, len(frames), interval):
+                    sampled_frames.append(frames[i])
+
+                # Further splitting each video into sub-videos of length self.length
+                sub_videos = [sampled_frames[i:i + length] for i in range(0, len(sampled_frames), length)]
+            elif self.interval_mode == 'interval':
+                # Interval sampling without all frames
+                sampled_frames = frames[::interval]
+
+                # Further splitting each video into sub-videos of length self.length
+                sub_videos = [sampled_frames[i:i + length] for i in range(0, len(sampled_frames), length)]
+            # Prepare sub-videos with img_file, frame_number, sub_frame_number
+            for sub_video in sub_videos:
+                sub_video_info = []
+                if len(sub_video) != length:
+                    continue
+                for sub_frame_number, frame_info in enumerate(sub_video):
+                    frame_info['sub_frame_number'] = sub_frame_number
+                    sub_video_info.append(frame_info)
+
+                all_sub_videos.append(sub_video_info)
+        
+        # Discard the extra sub-videos if not divisible by GPU count and batch_size
+        def lcm(a, b):
+            return abs(a * b) // math.gcd(a, b)
+        target_multiple = lcm(gpu_count, self.batch_size*self.batch_size)
+        old_len = len(all_sub_videos)
+        all_sub_videos = all_sub_videos[:(len(all_sub_videos) // target_multiple) * target_multiple]
+        new_len = len(all_sub_videos)
+        # all_sub_videos = all_sub_videos[:10*gpu_count*self.batch_size*self.batch_size]
+        
+        if dist.is_initialized():
+            self.world_size = dist.get_world_size()
+            self.rank = dist.get_rank()
+        else:
+            self.world_size = 1
+            self.rank = 0
+            
+        if self.rank == 0 or self.rank == -1:
+            print(f"\n*******************{'[Train]' if self.augment else '[Test]'}dataset split info************************")
+            LOGGER.info(f"Found {len(self.videos_info)} orige videos")
+            LOGGER.info(f"Split {len(all_sub_videos)} sub videos")
+            LOGGER.info(f"len sub videos is {list(set([len(spi) for spi in all_sub_videos]))[:10]} (print 10 number)")
+            LOGGER.info(f"len sub videos is change from {old_len} to {new_len} ")
+            # print(f"muti_rank_indices_splits: ")
+            # print(self.muti_rank_indices_splits)
+            LOGGER.info(f"*************************************************")
+
+        sub_videos_mapping, sampler_indices = self._precompute_index_mapping(all_sub_videos, is_training)
+        # sampler_indices的内容索引sub_videos_mapping的值，然后可以找到all_sub_videos的位置
+        return all_sub_videos, sub_videos_mapping, sampler_indices
+            
+    def _train_video(self, hyp, index):
+        """Sets bbox loss and builds transformations."""
+        # hyp.mosaic = 0.0
+        self.transforms = self.build_transforms(hyp) 
+        LOGGER.info(f"now train dataset convert to split_length: {self.data['split_length'][index]}   mode: split_length")
+        self.sub_videos, self.sub_videos_mapping, self.sampler_indices = self.split_sub_videos(self.interval, length=self.data["split_length"][index], 
+                                                                        gpu_count = self.world_size, is_training = self.augment)
+        
+    def cache_labels(self, path=Path("./labels.cache")):
+        """
+        Cache dataset labels, check images and read shapes.
+
+        Args:
+            path (Path): Path where to save the cache file. Default is Path('./labels.cache').
+
+        Returns:
+            (dict): labels.
+        """
+        x = {"labels": []}
+        nm, nf, ne, nc, msgs = 0, 0, 0, 0, []  # number missing, found, empty, corrupt, messages
+        desc = f"{self.prefix}Scanning {path.parent / path.stem}..."
+        total = len(self.im_files)
+        nkpt, ndim = self.data.get("kpt_shape", (0, 0))
+        if self.use_keypoints and (nkpt <= 0 or ndim not in {2, 3}):
+            raise ValueError(
+                "'kpt_shape' in data.yaml missing or incorrect. Should be a list with [number of "
+                "keypoints, number of dims (2 for x,y or 3 for x,y,visible)], i.e. 'kpt_shape: [17, 3]'"
+            )
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(
+                func=verify_image_label,
+                iterable=zip(
+                    self.im_files,
+                    self.label_files,
+                    repeat(self.prefix),
+                    repeat(self.use_keypoints),
+                    repeat(len(self.data["names"])),
+                    repeat(nkpt),
+                    repeat(ndim),
+                ),
+            )
+            pbar = TQDM(results, desc=desc, total=total)
+            for im_file, lb, shape, segments, keypoint, nm_f, nf_f, ne_f, nc_f, msg in pbar:
+                nm += nm_f
+                nf += nf_f
+                ne += ne_f
+                nc += nc_f
+                if im_file:
+                    x["labels"].append(
+                        {
+                            "im_file": im_file,
+                            "shape": shape,
+                            "cls": lb[:, 0:1],  # n, 1
+                            "bboxes": lb[:, 1:],  # n, 4
+                            "segments": segments,
+                            "keypoints": keypoint,
+                            "normalized": True,
+                            "bbox_format": "xywh",
+                        }
+                    )
+                if msg:
+                    msgs.append(msg)
+                pbar.desc = f"{desc} {nf} images, {nm + ne} backgrounds, {nc} corrupt"
+            pbar.close()
+
+        if msgs:
+            LOGGER.info("\n".join(msgs))
+        if nf == 0:
+            LOGGER.warning(f"{self.prefix}WARNING ⚠️ No labels found in {path}. {HELP_URL}")
+        x["hash"] = get_hash(self.label_files + self.im_files)
+        x["results"] = nf, nm, ne, nc, len(self.im_files)
+        x["msgs"] = msgs  # warnings
+        save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
+        return x
+    
+    def img2label_paths(self,img_paths):
+        # sa, sb = f'{self.images_dir}', f'{self.labels_dir}'  # /images/, /labels/ substrings
+        return [path.replace(sa, sb).split('.')[0]+'.txt' for path, sa, sb  in zip(img_paths, self.images_dir, self.labels_dir)]
+    
+    def get_labels(self):
+        """Returns dictionary of labels for YOLO training."""
+        self.label_files = self.img2label_paths(self.im_files)
+        # cache_path = Path(combine_unique_folders([os.path.splitext(p)[0] for p in self.img_path])).with_suffix('.cache')
+        cache_path = Path(self.img_path).with_suffix(".cache")
+        try:
+            cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file
+            assert cache["version"] == DATASET_CACHE_VERSION  # matches current version
+            assert cache["hash"] == get_hash(self.label_files + self.im_files)  # identical hash
+        except (FileNotFoundError, AssertionError, AttributeError):
+            cache, exists = self.cache_labels(cache_path), False  # run cache ops
+
+        # Display cache
+        nf, nm, ne, nc, n = cache.pop("results")  # found, missing, empty, corrupt, total
+        if exists and LOCAL_RANK in {-1, 0}:
+            d = f"Scanning {cache_path}... {nf} images, {nm + ne} backgrounds, {nc} corrupt"
+            TQDM(None, desc=self.prefix + d, total=n, initial=n)  # display results
+            if cache["msgs"]:
+                LOGGER.info("\n".join(cache["msgs"]))  # display warnings
+
+        # Read cache
+        [cache.pop(k) for k in ("hash", "version", "msgs")]  # remove items
+        labels = cache["labels"]
+        if not labels:
+            LOGGER.warning(f"WARNING ⚠️ No images found in {cache_path}, training may not work correctly. {HELP_URL}")
+        self.im_files = [lb["im_file"] for lb in labels]  # update im_files
+
+        # Check if the dataset is all boxes or all segments
+        lengths = ((len(lb["cls"]), len(lb["bboxes"]), len(lb["segments"])) for lb in labels)
+        len_cls, len_boxes, len_segments = (sum(x) for x in zip(*lengths))
+        if len_segments and len_boxes != len_segments:
+            LOGGER.warning(
+                f"WARNING ⚠️ Box and segment counts should be equal, but got len(segments) = {len_segments}, "
+                f"len(boxes) = {len_boxes}. To resolve this only boxes will be used and all segments will be removed. "
+                "To avoid this please supply either a detect or segment dataset, not a detect-segment mixed dataset."
+            )
+            for lb in labels:
+                lb["segments"] = []
+        if len_cls == 0:
+            LOGGER.warning(f"WARNING ⚠️ No labels found in {cache_path}, training may not work correctly. {HELP_URL}")
+        return labels
+        
+    def _set_samevideo_transform(self, seed):
+        # Get the current time as a random number seed
+        # seed = int(time.time())
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+    
+    def build_transforms(self, hyp=None):
+        """Builds and appends transforms to the list."""
+        if self.augment:
+            hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
+            hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
+            transforms = v8_transforms(self, self.imgsz, hyp)
+        else:
+            transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+        transforms.append(
+            Format(
+                bbox_format="xywh",
+                normalize=True,
+                return_mask=self.use_segments,
+                return_keypoint=self.use_keypoints,
+                return_obb=self.use_obb,
+                batch_idx=True,
+                mask_ratio=hyp.mask_ratio,
+                mask_overlap=hyp.overlap_mask,
+                bgr=hyp.bgr if self.augment else 0.0,  # only affect training.
+            )
+        )
+        return transforms
+
+    def update_labels_info(self, label):
+        """
+        Custom your label format here.
+
+        Note:
+            cls is not with bboxes now, classification and semantic segmentation need an independent cls label
+            Can also support classification and semantic segmentation by adding or removing dict keys there.
+        """
+        bboxes = label.pop("bboxes")
+        segments = label.pop("segments", [])
+        keypoints = label.pop("keypoints", None)
+        bbox_format = label.pop("bbox_format")
+        normalized = label.pop("normalized")
+
+        # NOTE: do NOT resample oriented boxes
+        segment_resamples = 100 if self.use_obb else 1000
+        if len(segments) > 0:
+            # make sure segments interpolate correctly if original length is greater than segment_resamples
+            max_len = max([len(s) for s in segments])
+            segment_resamples = (max_len + 1) if segment_resamples < max_len else segment_resamples
+            # list[np.array(segment_resamples, 2)] * num_samples
+            segments = np.stack(resample_segments(segments, n=segment_resamples), axis=0)
+        else:
+            segments = np.zeros((0, segment_resamples, 2), dtype=np.float32)
+        label["instances"] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized)
+        return label
+    
+    def __len__(self):
+        """Returns the length of the labels list for the dataset."""
+        return len(self.sub_videos_mapping)
+
+    
+    def get_image_and_label(self, index):
+        """Get and return label information from the dataset."""
+        video_idx, frame_idx, frame_info = self.get_video_frame_from_index(index, self.sub_videos_mapping)
+        label = deepcopy(self.labels[frame_info["index"]])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
+        label.pop('shape', None)  # shape is for rect, remove it
+        label['img'], label['ori_shape'], label['resized_shape'] = self.load_image(frame_info["index"])
+        
+        
+        label['ratio_pad'] = (label['resized_shape'][0] / label['ori_shape'][0],
+                              label['resized_shape'][1] / label['ori_shape'][1])  # for evaluation
+
+        label["img_metas"] = dict(frame_info)
+
+        label["img_metas"]["is_first"] = frame_info["sub_frame_number"]==0
+        
+        if self.rect:
+            label['rect_shape'] = np.ceil(np.array(label['resized_shape']) / self.stride + 0.5).astype(int) * self.stride
+        return self.update_labels_info(label)    
+
+    def _get_video_frame_indices(self):
+        # Generate indices for each video, where each index represents a frame in the video
+        video_frame_indices = []
+        for video_idx, video in enumerate(self.sub_videos):
+            video_frame_indices.append([video_idx] * len(video))  # Each video has a list of indices for its frames
+        return video_frame_indices
+    
+    def _precompute_index_mapping(self, all_sub_videos, is_training):
+        """
+        Precompute the mapping from global index to (video_idx, frame_idx).
+        
+        Returns:
+            dict: A dictionary mapping global frame index to (video_idx, frame_idx).
+        """
+        world_size = self.world_size if is_training else 1
+        index_to_video_frame = {}
+        global_index = 0  # Global frame index
+        assert len(all_sub_videos)%world_size == 0, "Number of videos should be divisible by number of GPUs"
+        
+        for video_idx, video in enumerate(all_sub_videos):
+            for frame_idx in range(len(video)):
+                index_to_video_frame[global_index] = (video_idx, frame_idx)
+                global_index += 1
+                
+        indices = list(range(len(index_to_video_frame)))
+        # 将索引分成 self.world_size 份数的列表
+        chunk_size = len(indices) // world_size
+        index_chunks = [indices[i:i + chunk_size] for i in range(0, len(indices), chunk_size)]
+        
+        first_frame_per_GPU = [index_to_video_frame[inds[0]] for inds in index_chunks]
+        LOGGER.info(f"First_frame_per_GPU (video_idx, frame_number): {first_frame_per_GPU}\n")
+        assert any([f[-1]==0 for f in first_frame_per_GPU]), "The first frame of each video should be in the same GPU"
+        
+        return index_to_video_frame, index_chunks
+    
+    def get_video_frame_from_index(self, index, sub_videos_mapping):
+        """
+        Given an index, returns the corresponding sub_video and frame data from self.dataset.sub_videos.
+        
+        Args:
+            index (int): The index to look up in video_frame_indices.
+        
+        Returns:
+            tuple: (video_idx, frame_data) where:
+                - video_idx is the index of the video in self.dataset.sub_videos.
+                - frame_data is the dictionary containing frame details like img_file, frame_number, sub_frame_number.
+        """
+        # Retrieve the (video_idx, frame_idx) from the precomputed mapping
+        video_idx, frame_idx = sub_videos_mapping.get(index, (None, None))
+        
+        if video_idx is None:
+            raise IndexError("Index out of range")
+        # Get the frame data from the sub_videos list
+        frame_data = self.sub_videos[video_idx][frame_idx]
+        return video_idx, frame_idx, frame_data
+    
+    def __getitem__(self, index):
+        """Returns transformed label information for given index."""
+        video_idx, frame_idx, _ = self.get_video_frame_from_index(index, self.sub_videos_mapping)
+        orige_dict = self.get_image_and_label(index)
+        self._set_samevideo_transform(video_idx+self.epoch*10) #Same video in one epoch with consistent random seeds
+        trans_dict = self.transforms(orige_dict.copy())
+        
+        if orige_dict["img_metas"]["is_first"]:
+            support_trans_dict = trans_dict.copy()
+        else:
+            video_idx_last, frame_idx_last, _ = self.get_video_frame_from_index(index-1, self.sub_videos_mapping)
+            assert video_idx_last == video_idx and frame_idx_last == frame_idx-1, "The previous frame should be in the same video"
+            support_dict = self.get_image_and_label(index-1)
+            support_trans_dict = self.transforms(support_dict.copy())
+        # trans_dict['img_ref'] = self.get_ref_img(orige_dict["neg_idx"][0]) #The most recent frame
+        # motion = self._homoDta_preprocess(tensor_numpy(trans_dict["img"]),tensor_numpy(trans_dict['img_ref']))
+        # trans_dict.update(motion)
+
+        
+        # self.show_transforms(orige_dict,trans_dict)
+        trans_dict["index"] = index
+        trans_dict["img_metas"] = orige_dict["img_metas"]
+        trans_dict["support_bboxes"] = support_trans_dict["bboxes"]
+        return trans_dict  
+
+    @staticmethod
+    def collate_fn(batch):
+        """Collates data samples into batches."""
+        new_batch = {}
+        keys = batch[0].keys()
+        values = list(zip(*[list(b.values()) for b in batch]))
+        for i, k in enumerate(keys):
+            value = values[i]
+            if k == "img":
+                value = torch.stack(value, 0)
+            if k in {"masks", "keypoints", "bboxes", "cls", "segments", "obb", 'support_bboxes'}:
+                value = torch.cat(value, 0)
+            new_batch[k] = value
+        new_batch["batch_idx"] = list(new_batch["batch_idx"])
+        for i in range(len(new_batch["batch_idx"])):
+            new_batch["batch_idx"][i] += i  # add target image index for build_targets()
+        new_batch["batch_idx"] = torch.cat(new_batch["batch_idx"], 0)
+        return new_batch
+    
+class YOLOVideoDataset_test(BaseDataset_2):
+    """
+
+    Args:
+        data (dict, optional): A dataset YAML dictionary. Defaults to None.
+        use_segments (bool, optional): If True, segmentation masks are used as labels. Defaults to False.
+        use_keypoints (bool, optional): If True, keypoints are used as labels. Defaults to False.
+
+    Returns:
+        (torch.utils.data.Dataset): A PyTorch dataset object that can be used for training an object detection model.
+    """
+    def __init__(self, *args, data=None, task="detect", **kwargs):
+        """Initializes the YOLODataset with optional configurations for segments and keypoints."""
+        self.use_segments = task == "segment"
+        self.use_keypoints = task == "pose"
+        self.use_obb = task == "obb"
+        self.data = data
+        assert not (self.use_segments and self.use_keypoints), "Can not use both segments and keypoints."
+        super().__init__(*args, **kwargs)
+        self.match_number = self.data["match_number"]
+        self.interval = self.data["interval"]
+        self.split_mode = self.data["split_mode"]
         self.im_frame_matching(self.im_files)
         self.epoch = 0
+        self.length = 1
         self.data_fre = [0] * len(self.img_video_info)
     
     def from_coco_get_image_id(self,file_name_mapping_id,im_file):
@@ -321,7 +774,7 @@ class YOLOVideoDataset(BaseDataset_2):
             for video_name,video_list in video_image_dict.items():
                 self.sub_video_splits.append(video_list)
                     
-        elif mode=="split_legnth":
+        elif mode=="length":
             min_video_lengthes = min([len(video_list)-1 for video_list in video_image_dict.values()])
             self.length = min(min_video_lengthes,length) #Video segments should not be too long
             print(f"min length video is {self.length}")
@@ -353,7 +806,7 @@ class YOLOVideoDataset(BaseDataset_2):
                     difference = nearest_multiple_of_3 - len_sub_video_splits
                     for i in range(difference):
                         self.sub_video_splits.append(list(self.sub_video_splits[i]))
-        elif mode=="split_random":
+        elif mode=="random":
             print(f"min length rate video is {length}")
             self.sub_video_splits = []
             # Get the full division of self.interval interval for each video
@@ -397,6 +850,7 @@ class YOLOVideoDataset(BaseDataset_2):
                 del info["seed"]
             if "is_first" in info:
                 info["is_first"] = []
+            info["frame_ids"] = []
         i = 0
         for gpu_video_index_list in self.muti_rank_indices_splits: #Storing a different seed for each video that the gpu may access means that if there are videos or images that are accessed twice with different seed
             # At the same time dataset get item will take seed in order and use the
@@ -413,12 +867,17 @@ class YOLOVideoDataset(BaseDataset_2):
                         self.img_video_info[frame["index"]]["seed"].append(i*5) #Belongs to muti videos
                     else:
                         self.img_video_info[frame["index"]]["seed"] = [i*5]  #Video Enhanced Random Seeds, One Video One Seed
+                        
+                    if "frame_ids" in self.img_video_info[frame["index"]]:
+                        self.img_video_info[frame["index"]]["frame_ids"].append(index) #Belongs to muti videos
+                    else:
+                        self.img_video_info[frame["index"]]["frame_ids"] = [index]  #Video Enhanced Random Seeds, One Video One Seed
                 i += 1
                     
 
     def video_init_split(self, video_image_dict):
         if self.augment:
-            self.video_sampler_split(video_image_dict, mode="split_random", length=8)
+            self.video_sampler_split(video_image_dict, mode=self.split_mode, length=8)
         else:
             self.video_sampler_split(video_image_dict, mode="all")
             
@@ -478,17 +937,6 @@ class YOLOVideoDataset(BaseDataset_2):
             
         
     def im_frame_matching(self, im_files):
-        # import json
-        
-        #val
-        coco_data = None
-        image_name_map_id = None
-        if "eval_ann_json" in self.data:
-            with open(self.data["eval_ann_json"], 'r', encoding='utf-8') as coco_file:
-                coco_data = json.load(coco_file)
-            image_name_map_id = {}
-            for image in coco_data["images"]:
-                image_name_map_id[image["file_name"]] = image["id"]
 
         # Create a dictionary that groups images by video name
         video_image_dict = {}
@@ -512,7 +960,6 @@ class YOLOVideoDataset(BaseDataset_2):
             img_video_info.append({
                 "frame_number":frame_num,
                 "video_name":video_name,
-                "image_id":self.from_coco_get_image_id(image_name_map_id,video_name+"/"+os.path.basename(image_path))
             })
 
         # Sort each video by frame number
@@ -684,19 +1131,7 @@ class YOLOVideoDataset(BaseDataset_2):
         # hyp.mosaic = 0.0
         self.transforms = self.build_transforms(hyp) 
         LOGGER.info(f"now train dataset convert to split_length: {self.data['split_length'][index]}   mode: split_random")
-        self.video_sampler_split(self.video_image_dict.copy(), mode="split_random", length=self.data["split_length"][index])
-
-    def _train_backbone(self, hyp):
-        """Sets bbox loss and builds transformations."""
-        # hyp.mosaic = 1.0
-        self.transforms = self.build_transforms(hyp) 
-        self.video_sampler_split(self.video_image_dict.copy(), mode="split_random", length=self.data["split_length"][0])
-
-    def _train_all(self, hyp):
-        """Sets bbox loss and builds transformations."""
-        # hyp.mosaic = 1.0
-        self.transforms = self.build_transforms(hyp) 
-        self.video_sampler_split(self.video_image_dict.copy(), mode="all", length=self.data["split_length"][0])
+        self.video_sampler_split(self.video_image_dict.copy(), mode=self.split_mode, length=self.data["split_length"][index])
     
     def build_transforms(self, hyp=None):
         """Builds and appends transforms to the list."""
@@ -777,7 +1212,7 @@ class YOLOVideoDataset(BaseDataset_2):
         
         label['ratio_pad'] = (label['resized_shape'][0] / label['ori_shape'][0],
                               label['resized_shape'][1] / label['ori_shape'][1])  # for evaluation
-        label["image_id"] = image_info["image_id"]
+        # label["image_id"] = image_info["image_id"]
         label["img_metas"] = {
             "frame_number":image_info["frame_number"],
             "video_name":image_info["video_name"],
@@ -788,6 +1223,11 @@ class YOLOVideoDataset(BaseDataset_2):
             label["seed"], image_info["seed"] = self.select_now_seed(image_info["seed"])
         else:
             label["seed"] = image_info["seed"][0]
+            
+        if len(image_info["frame_ids"]) > 1:#image belongs to multiple video clips
+            label["img_metas"]["sub_frame_id"], image_info["frame_ids"] = self.select_now_seed(image_info["frame_ids"])
+        else:
+            label["img_metas"]["sub_frame_id"] = image_info["frame_ids"][0]
 
         if len(image_info["is_first"]) > 1:#image belongs to multiple video clips
             label["img_metas"]["is_first"], image_info["is_first"] = self.select_now_seed(image_info["is_first"])
