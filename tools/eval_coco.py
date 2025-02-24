@@ -4,8 +4,8 @@ from ultralytics.data.cocoeval import COCOeval  # noqa
 
 # anno_json = "/data/jiahaoguo/dataset/speed_merge/merge_test_1.json"
 # pred_json = "/data/jiahaoguo/YOLOFT/yoloft/train53/predictions.json"
-anno_json = "/data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
-pred_json = "/data/shuzhengwang/project/ultralytics/runs/detect/train68/weights/last.pt_val/predictions.json"
+anno_json = "/data/jiahaoguo/dataset/XS-VIDv4/annotations/test.json"
+pred_json = "/data/jiahaoguo/ultralytics_yoloft/ultralytics/runs/detect/train9/predictions.json"
 
 # 27.8 38.5 34.0 0.5 9.5 53.2 26.3 66.4 43.3
 # 8.9 13.8 9.2 1.0 11.0 19.3 3.2 27.5 27.6
