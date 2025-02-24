@@ -602,7 +602,7 @@ class YOLOVideoDataset(BaseDataset_2):
         video_idx, frame_idx, frame_info = self.get_video_frame_from_index(index, self.sub_videos_mapping)
         label = deepcopy(self.labels[frame_info["index"]])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
         label.pop('shape', None)  # shape is for rect, remove it
-        label['img'], label['ori_shape'], label['resized_shape'] = self.load_image(frame_info["index"])
+        label['img'], label['ori_shape'], label['resized_shape'] = self.load_image(frame_info["index"], video_mapping_index=index)
         
         
         label['ratio_pad'] = (label['resized_shape'][0] / label['ori_shape'][0],
@@ -631,25 +631,25 @@ class YOLOVideoDataset(BaseDataset_2):
             dict: A dictionary mapping global frame index to (video_idx, frame_idx).
         """
         world_size = self.world_size if is_training else 1
-        index_to_video_frame = {}
+        sub_videos_mapping = {}
         global_index = 0  # Global frame index
         assert len(all_sub_videos)%world_size == 0, "Number of videos should be divisible by number of GPUs"
         
         for video_idx, video in enumerate(all_sub_videos):
             for frame_idx in range(len(video)):
-                index_to_video_frame[global_index] = (video_idx, frame_idx)
+                sub_videos_mapping[global_index] = (video_idx, frame_idx)
                 global_index += 1
                 
-        indices = list(range(len(index_to_video_frame)))
+        indices = list(range(len(sub_videos_mapping)))
         # 将索引分成 self.world_size 份数的列表
         chunk_size = len(indices) // world_size
         index_chunks = [indices[i:i + chunk_size] for i in range(0, len(indices), chunk_size)]
         
-        first_frame_per_GPU = [index_to_video_frame[inds[0]] for inds in index_chunks]
+        first_frame_per_GPU = [sub_videos_mapping[inds[0]] for inds in index_chunks]
         LOGGER.info(f"First_frame_per_GPU (video_idx, frame_number): {first_frame_per_GPU}\n")
         assert any([f[-1]==0 for f in first_frame_per_GPU]), "The first frame of each video should be in the same GPU"
-        
-        return index_to_video_frame, index_chunks
+
+        return sub_videos_mapping, index_chunks
     
     def get_video_frame_from_index(self, index, sub_videos_mapping):
         """

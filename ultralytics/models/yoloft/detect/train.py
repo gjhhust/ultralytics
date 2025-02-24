@@ -167,7 +167,7 @@ class DetectionTrainer(BaseTrainer):
         if isinstance(self.args.train_slit, int):
             self.args.train_slit = [self.args.train_slit]
             
-        # nw = 200
+        nw = -1
         while True:
             self.epoch = epoch
             self.run_callbacks("on_train_epoch_start")
@@ -228,7 +228,7 @@ class DetectionTrainer(BaseTrainer):
                     (self.loss, self.loss_items), self.save_fmaps = self.model(batch)
 
                     if RANK != -1:
-                        self.loss *= world_size
+                        self.loss = self.loss*world_size
                         
                     self.loss_sum =  self.loss_sum + self.loss
                     self.tloss = (
