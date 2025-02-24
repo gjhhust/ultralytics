@@ -16,7 +16,7 @@ from ultralytics.nn.modules.memory_buffer import StreamBuffer_onnx
 from ultralytics.utils import LOGGER, RANK
 from ultralytics.utils.plotting import plot_images, plot_labels, plot_results, plot_video
 from ultralytics.utils.torch_utils import de_parallel, torch_distributed_zero_first
-from ultralytics.nn.modules import MSTF_STREAM, MSTF_STREAM_cbam,MSTF_STREAM_cbam_Focus
+from ultralytics.nn.modules import MSTF_STREAM, MSTF_STREAM_cbam
 import warnings
 from copy import copy
 
@@ -166,6 +166,8 @@ class DetectionTrainer(BaseTrainer):
         self.save_fmaps = None
         if isinstance(self.args.train_slit, int):
             self.args.train_slit = [self.args.train_slit]
+            
+        # nw = 200
         while True:
             self.epoch = epoch
             self.run_callbacks("on_train_epoch_start")
@@ -188,16 +190,21 @@ class DetectionTrainer(BaseTrainer):
                     if hasattr(self.train_loader.dataset, '_train_video'):
                         self.train_loader.dataset._train_video(hyp=self.args, index = sp)
                     self.train_loader.reset()   
-            # if epoch == 0:
-            #     LOGGER.info('start train backbone')
-            #     if hasattr(self.train_loader.dataset, '_train_backbone'):
-            #         self.train_loader.dataset._train_backbone(hyp=self.args)
-            #     self.train_loader.reset()   
-
+                    
+            # At the beginning of the epoch loop, check if the dataset has a length attribute
+            if hasattr(self.train_loader.dataset, 'length'):
+                self.loss_step = self.train_loader.dataset.length
+            else:
+                self.loss_step = 1
+                
             if RANK in {-1, 0}:
                 LOGGER.info(self.progress_string())
+                nb = len(self.train_loader) 
                 pbar = TQDM(enumerate(self.train_loader), total=nb)
             self.tloss = None
+            self.loss_sum  = 0
+            # torch.autograd.set_detect_anomaly(True)
+            batch_last = None
             for i, batch in pbar:
                 self.run_callbacks("on_train_batch_start")
                 # if i > 5:
@@ -222,27 +229,31 @@ class DetectionTrainer(BaseTrainer):
 
                     if RANK != -1:
                         self.loss *= world_size
+                        
+                    self.loss_sum =  self.loss_sum + self.loss
                     self.tloss = (
                         (self.tloss * i + self.loss_items) / (i + 1) if self.tloss is not None else self.loss_items
                     )
-
-                # Backward
-                self.scaler.scale(self.loss).backward()
-
-                # Optimize - https://pytorch.org/docs/master/notes/amp_examples.html
-                if ni - last_opt_step >= self.accumulate:
-                    self.optimizer_step()
-                    last_opt_step = ni
-
-                    # Timed stopping
-                    if self.args.time:
-                        self.stop = (time.time() - self.train_time_start) > (self.args.time * 3600)
-                        if RANK != -1:  # if DDP training
-                            broadcast_list = [self.stop if RANK == 0 else None]
-                            dist.broadcast_object_list(broadcast_list, 0)  # broadcast 'stop' to all ranks
-                            self.stop = broadcast_list[0]
-                        if self.stop:  # training time exceeded
-                            break
+                if ni <= nw or self.loss_step == 1:
+                    # Backward
+                    self.scaler.scale(self.loss).backward()
+                    self.loss_sum = 0
+                    # Warmup阶段保持原有逻辑
+                    if ni - last_opt_step >= self.accumulate:
+                        self.optimizer_step()
+                        last_opt_step = ni 
+                else:
+                    # 非Warmup阶段使用loss_step控制
+                    current_frame = batch["img_metas"][0]["sub_frame_number"]
+                    assert all(fid["sub_frame_number"] == current_frame for fid in batch["img_metas"]), "not all sub_frame_id are the same"
+                    if current_frame != 0 and batch_last is not None:
+                        assert any([batch["img_metas"][ind]["video_name"]==batch_last["img_metas"][ind]["video_name"] for ind in range(len(batch_last["img_metas"]))]), "not all video_name are the same"
+                    
+                    if current_frame + 1 == self.loss_step:
+                        self.scaler.scale(self.loss_sum).backward()
+                        self.optimizer_step()
+                        last_opt_step = ni
+                        self.loss_sum  = 0
 
                 # Log
                 if RANK in {-1, 0}:
@@ -275,6 +286,7 @@ class DetectionTrainer(BaseTrainer):
                             save_sample_flag = True #only plot once
                             
                 self.run_callbacks("on_train_batch_end")
+                batch_last = batch.copy()
 
             self.lr = {f"lr/pg{ir}": x["lr"] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
             self.run_callbacks("on_train_epoch_end")

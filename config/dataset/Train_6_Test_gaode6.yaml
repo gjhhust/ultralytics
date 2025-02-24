@@ -2,6 +2,7 @@
 # Train/val/test sets as 1) dir: path/to/imgs, 2) file: path/to/imgs.txt, or 3) list: [path/to/imgs1, path/to/imgs2, ..]
 datasampler:  streamSampler #使得生成的index和视频关联
 datasetname: YOLOVideoDataset #YOLODataset YOLOVideoDataset
+split_mode: length #random all  表示视频切片策略 length时严格按照长度切片， random表示按照长度附近进行波动切片
 
 # train:gaode_5 test:gaode_6
 train: /data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_rm198_filtered.txt
@@ -17,8 +18,7 @@ test: /data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.txt
 test_labels_dir: /data/jiahaoguo/datasets/gaode_6/annotations/yolo/
 test_images_dir: /data/jiahaoguo/datasets/gaode_6/images/
 
-split_length: [2, 20, 100] #先使用10的片段训练，再50 "all"表示不切割
-
+split_length: [2, 50, 8] #先使用10的片段训练，再50 "all"表示不切割
 
 match_number: 1  #当前帧前后各取一共几个关连帧，match_number=2即前后各取一个
 interval: 2    # 取得帧间隔当前帧

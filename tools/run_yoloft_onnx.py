@@ -178,9 +178,9 @@ def preprocess(buffer, img_np, frame_id, save_fmaps, imagz = 896):
             fmaps_old = buffer.update_memory(save_fmaps, [frame_id], img_np.shape)
             batch = (img_np, fmaps_old)
         else:
-            batch = (img_np, (np.zeros([1, 64, imagz//4, imagz//4], dtype=np.float32), 
-                                    np.zeros([1, 104, imagz//8, imagz//8], dtype=np.float32), 
-                                    np.zeros([1, 192, imagz//16, imagz//16], dtype=np.float32)))
+            batch = (img_np, (np.zeros([1, imagz//4, imagz//4, 64], dtype=np.float32), 
+                                    np.zeros([1, imagz//8, imagz//8, 104], dtype=np.float32), 
+                                    np.zeros([1, imagz//16, imagz//16, 192], dtype=np.float32)))
 
         return batch
     
@@ -316,7 +316,7 @@ def run_model(session, input, augment=False):
 
 json_path = "/data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
 images_dir = "/data/jiahaoguo/datasets/gaode_6/images"
-onnx_model_path = "/data/shuzhengwang/project/ultralytics/runs/detect/train68/weights/last.onnx"
+onnx_model_path = "/data/shuzhengwang/project/ultralytics/runs/detect/train194/weights/epoch16.onnx"
 imagz = 896
 
 
@@ -337,6 +337,7 @@ for i, batch in enumerate(TQDM(dataloader, total=len(dataloader))):
     img_np, file_names, frame_ids, transform_infos = batch
     batch = preprocess(buffer, img_np, frame_ids[0], save_fmaps)
     preds, save_fmaps = run_model(session, batch)
+    # save_fmaps = [np.transpose(f, (0, 3, 1, 2)) for f in save_fmaps]
     preds = [pred.numpy() for pred in postprocess(torch.from_numpy(preds), conf=0.001)]  #val 0.001, pred 0.25
     
     for pred in preds:
@@ -348,9 +349,9 @@ coco_evaluator.save_json(os.path.dirname(onnx_model_path))
 
 # 随机生成示例输入数据，替换为实际数据
 # img = np.random.randn(1, 3, 896, 896).astype(np.float32)  # 输入图像
-# fmap2 = np.random.randn(1, 64, 224, 224).astype(np.float32)  # 特征图2
-# fmap1 = np.random.randn(1, 104, 112, 112).astype(np.float32)  # 特征图1
-# fmap0 = np.random.randn(1, 192, 56, 56).astype(np.float32)  # 特征图0
+# fmap2 = np.random.randn(1, 224, 224, 64).astype(np.float32)  # 特征图2
+# fmap1 = np.random.randn(1, 112, 112, 104).astype(np.float32)  # 特征图1
+# fmap0 = np.random.randn(1, 56, 56, 192).astype(np.float32)  # 特征图0
 
 # input_names = [input.name for input in session.get_inputs()]
 # output_names = [output.name for output in session.get_outputs()]
