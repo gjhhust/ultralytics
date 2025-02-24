@@ -92,7 +92,7 @@ class StreamBuffer_onnx(object):
     def update_memory(self, memory_last, img_metas, spatial_shape):
         spatial_shape = torch.as_tensor(spatial_shape, device=memory_last[0].device)
         
-        memory_fmaps = [f.clone().detach() for f in memory_last]
+        memory_fmaps = [f.clone() for f in memory_last]
 
         b, dim, h, w = memory_last[0].shape
         assert len(img_metas) == b
