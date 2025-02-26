@@ -394,6 +394,8 @@ class DetectionModel(BaseModel):
         """Initialize the loss criterion for the DetectionModel."""
         return E2EDetectLoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
 
+from ultralytics.nn.modules.memory_buffer import StreamBuffer_onnx 
+
 class VideoDetectionModel(BaseModel):
     """YOLOv8 detection model."""
 
@@ -441,6 +443,7 @@ class VideoDetectionModel(BaseModel):
         if verbose:
             self.info()
             LOGGER.info("")
+        
 
 
     def loss(self, batch, preds=None):
@@ -454,7 +457,7 @@ class VideoDetectionModel(BaseModel):
         if getattr(self, "criterion", None) is None:
             self.criterion = self.init_criterion()
 
-        preds = self.forward(batch["input"]) if preds is None else preds
+        preds = self.forward(batch) if preds is None else preds
         
         if len(preds) == 2:
             preds, return_fmaps = preds
@@ -462,6 +465,25 @@ class VideoDetectionModel(BaseModel):
         else:
             return self.criterion(preds, batch), None
     
+    def loss_video(self, batch_video, preds=None):
+        """
+        Compute loss.
+
+        Args:
+            batch_video List(dict): Batch to compute loss on
+            preds (torch.Tensor | List[torch.Tensor]): Predictions.
+        """
+        if getattr(self, "criterion", None) is None:
+            self.criterion = self.init_criterion()
+        
+        features = [None, None, None]
+        loss_video = []
+        for i, batch_frame in enumerate(batch_video): # List of videso batch
+            preds, features = self.forward((batch_frame["img"], features))
+            loss_video.append(self.criterion(preds, batch_frame))
+        loss, loss_item = tuple(map(sum, zip(*loss_video)))
+        return (loss/len(batch_video), loss_item/len(batch_video))
+        
     def forward(self, x, *args, **kwargs):
         """
         Perform forward pass of the model for either training or inference.
@@ -477,9 +499,32 @@ class VideoDetectionModel(BaseModel):
             (torch.Tensor): Loss if x is a dict (training), or network predictions (inference).
         """
         if isinstance(x, dict):  # for cases of training and validating while training.
-            return self.loss(x, *args, **kwargs)
+            return self.loss_video(x["train_video"], *args, **kwargs)
+        elif isinstance(x, (list, tuple)) and len(x) == 2:
+            self.predict(x[0], *x[1])
+            
+        return self.predict(x, *args, **kwargs)
+    
+    def forward_train_videos(self, x, *args, **kwargs):
+        """
+        Perform forward pass of the model for either training or inference.
+
+        If x is a dict, calculates and returns the loss for training. Otherwise, returns predictions for inference.
+
+        Args:
+            x (torch.Tensor | dict): Input tensor for inference, or dict with image tensor and labels for training.
+            *args (Any): Variable length argument list.
+            **kwargs (Any): Arbitrary keyword arguments.
+
+        Returns:
+            (torch.Tensor): Loss if x is a dict (training), or network predictions (inference).
+        """
+        if isinstance(x, dict):  # for cases of training and validating while training.
+            return self.loss_video(x, *args, **kwargs)
         if isinstance(x, (list, tuple)) and len(x) == 2:
             self.predict(x[0], *x[1])
+        # elif isinstance(x, (list, tuple)):
+        #     self._predict_video(x, *args, **kwargs)
         return self.predict(x, *args, **kwargs)
     
     # def predict(self, x, profile=False, visualize=False, augment=False, embed=None):
@@ -548,6 +593,37 @@ class VideoDetectionModel(BaseModel):
                 embeddings.append(nn.functional.adaptive_avg_pool2d(x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
                 if m.i == max(embed):
                     return torch.unbind(torch.cat(embeddings, 1), dim=0)
+        return x, [f.permute(0, 2, 3, 1) for f in y[13]]  # return output
+    
+    def _predict_video(self, video_x, profile=False, visualize=False, embed=None):
+        """
+        Perform a forward pass through the network.
+
+        Args:
+            x (torch.Tensor): The input tensor to the model.
+            profile (bool):  Print the computation time of each layer if True, defaults to False.
+            visualize (bool): Save the feature maps of the model if True, defaults to False.
+            embed (list, optional): A list of feature vectors/embeddings to return.
+            return_fmaps_id(int, optional): A list of layer indices to return feature maps for as buffers.
+
+        Returns:
+            (torch.Tensor): The last output of the model.
+        """
+        for x in video_x:
+            y, dt, embeddings = [], [], []  # outputs
+            for m in self.model:
+                if m.f != -1:  # if not from previous layer
+                    x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
+                if profile:
+                    self._profile_one_layer(m, x, dt)
+                x = m(x)  # run
+                y.append(x if m.i in self.save else None)  # save output
+                if visualize:
+                    feature_visualization(x, m.type, m.i, save_dir=visualize)
+                if embed and m.i in embed:
+                    embeddings.append(nn.functional.adaptive_avg_pool2d(x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
+                    if m.i == max(embed):
+                        return torch.unbind(torch.cat(embeddings, 1), dim=0)
         return x, [f.permute(0, 2, 3, 1) for f in y[13]]  # return output
     
     @staticmethod

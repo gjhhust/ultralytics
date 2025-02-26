@@ -301,7 +301,7 @@ class YOLOVideoDataset(BaseDataset_2):
         
         self.length = -1
         self.epoch = 0
-        self.sub_videos, self.sub_videos_mapping, self.sampler_indices  = self.split_sub_videos(self.interval, -1, self.world_size, is_training = self.augment)
+        self.sub_videos, self.sub_videos_mapping, self.sampler_indices  = self.split_sub_videos(self.interval, 10, self.world_size, is_training = self.augment)
     
     def im_frame_matching(self, im_files):
         # Create a dictionary that groups images by video name
@@ -340,7 +340,13 @@ class YOLOVideoDataset(BaseDataset_2):
         # If validation mode, just output original videos
         if not is_training:
             for video_info in self.videos_info:
-                all_sub_videos.append(video_info['frames'])
+                frames = []
+                for i, frame_info in enumerate(video_info['frames']):
+                    frame_info["sub_frame_number"] = i
+                    frames.append(frame_info)
+                all_sub_videos.append(frames)    
+            # all_sub_videos = all_sub_videos[:8]
+            
             self.sub_videos = all_sub_videos
             sub_videos_mapping, sampler_indices = self._precompute_index_mapping(all_sub_videos, is_training)
             return self.sub_videos, sub_videos_mapping, sampler_indices
@@ -385,7 +391,8 @@ class YOLOVideoDataset(BaseDataset_2):
         old_len = len(all_sub_videos)
         all_sub_videos = all_sub_videos[:(len(all_sub_videos) // target_multiple) * target_multiple]
         new_len = len(all_sub_videos)
-
+        # all_sub_videos = all_sub_videos[:1000*gpu_count*self.batch_size*self.batch_size]
+        
         if dist.is_initialized():
             self.world_size = dist.get_world_size()
             self.rank = dist.get_rank()
@@ -595,7 +602,7 @@ class YOLOVideoDataset(BaseDataset_2):
         video_idx, frame_idx, frame_info = self.get_video_frame_from_index(index, self.sub_videos_mapping)
         label = deepcopy(self.labels[frame_info["index"]])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
         label.pop('shape', None)  # shape is for rect, remove it
-        label['img'], label['ori_shape'], label['resized_shape'] = self.load_image(frame_info["index"])
+        label['img'], label['ori_shape'], label['resized_shape'] = self.load_image(frame_info["index"], video_mapping_index=index)
         
         
         label['ratio_pad'] = (label['resized_shape'][0] / label['ori_shape'][0],
@@ -624,25 +631,25 @@ class YOLOVideoDataset(BaseDataset_2):
             dict: A dictionary mapping global frame index to (video_idx, frame_idx).
         """
         world_size = self.world_size if is_training else 1
-        index_to_video_frame = {}
+        sub_videos_mapping = {}
         global_index = 0  # Global frame index
         assert len(all_sub_videos)%world_size == 0, "Number of videos should be divisible by number of GPUs"
         
         for video_idx, video in enumerate(all_sub_videos):
             for frame_idx in range(len(video)):
-                index_to_video_frame[global_index] = (video_idx, frame_idx)
+                sub_videos_mapping[global_index] = (video_idx, frame_idx)
                 global_index += 1
                 
-        indices = list(range(len(index_to_video_frame)))
+        indices = list(range(len(sub_videos_mapping)))
         # 将索引分成 self.world_size 份数的列表
         chunk_size = len(indices) // world_size
         index_chunks = [indices[i:i + chunk_size] for i in range(0, len(indices), chunk_size)]
         
-        first_frame_per_GPU = [index_to_video_frame[inds[0]] for inds in index_chunks]
+        first_frame_per_GPU = [sub_videos_mapping[inds[0]] for inds in index_chunks]
         LOGGER.info(f"First_frame_per_GPU (video_idx, frame_number): {first_frame_per_GPU}\n")
         assert any([f[-1]==0 for f in first_frame_per_GPU]), "The first frame of each video should be in the same GPU"
-        
-        return index_to_video_frame, index_chunks
+
+        return sub_videos_mapping, index_chunks
     
     def get_video_frame_from_index(self, index, sub_videos_mapping):
         """
@@ -672,13 +679,13 @@ class YOLOVideoDataset(BaseDataset_2):
         self._set_samevideo_transform(video_idx+self.epoch*10) #Same video in one epoch with consistent random seeds
         trans_dict = self.transforms(orige_dict.copy())
         
-        if orige_dict["img_metas"]["is_first"]:
-            support_trans_dict = trans_dict.copy()
-        else:
-            video_idx_last, frame_idx_last, _ = self.get_video_frame_from_index(index-1, self.sub_videos_mapping)
-            assert video_idx_last == video_idx and frame_idx_last == frame_idx-1, "The previous frame should be in the same video"
-            support_dict = self.get_image_and_label(index-1)
-            support_trans_dict = self.transforms(support_dict.copy())
+        # if orige_dict["img_metas"]["is_first"]:
+        #     support_trans_dict = trans_dict.copy()
+        # else:
+        #     video_idx_last, frame_idx_last, _ = self.get_video_frame_from_index(index-1, self.sub_videos_mapping)
+        #     assert video_idx_last == video_idx and frame_idx_last == frame_idx-1, "The previous frame should be in the same video"
+        #     support_dict = self.get_image_and_label(index-1)
+        #     support_trans_dict = self.transforms(support_dict.copy())
         # trans_dict['img_ref'] = self.get_ref_img(orige_dict["neg_idx"][0]) #The most recent frame
         # motion = self._homoDta_preprocess(tensor_numpy(trans_dict["img"]),tensor_numpy(trans_dict['img_ref']))
         # trans_dict.update(motion)
@@ -687,7 +694,7 @@ class YOLOVideoDataset(BaseDataset_2):
         # self.show_transforms(orige_dict,trans_dict)
         trans_dict["index"] = index
         trans_dict["img_metas"] = orige_dict["img_metas"]
-        trans_dict["support_bboxes"] = support_trans_dict["bboxes"]
+        # trans_dict["support_bboxes"] = support_trans_dict["bboxes"]
         return trans_dict  
 
     @staticmethod

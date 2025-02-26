@@ -24,102 +24,6 @@ from ultralytics.data.utils import IMG_FORMATS, PIN_MEMORY, VID_FORMATS
 from ultralytics.utils import RANK, colorstr
 from ultralytics.utils.checks import check_file
 
-from torch.utils.data.distributed import DistributedSampler
-import torch.distributed as dist
-# add by guojiahao
-
-class StreamSampler(DistributedSampler):
-    '''
-    Streaming Sampling Datasets from Video
-    '''
-    def __init__(self, dataset, batch_size, seed=10,distributed=False):
-        self.dataset = dataset
-        self.batch_size = batch_size
-
-        self.seed = seed
-        if distributed:
-            self.rank = dist.get_rank()  # Get the rank of the current process
-            self.world_size = dist.get_world_size()  # Get the total number of processes
-        else:
-            self.rank = 0
-            self.world_size = 1
-            
-        self.last_next_frame_index = [None for i in range(int(batch_size))]
-        self.next_train_video_index = 0
-
-        # random.seed(self.seed)
-        # indices = list(range(len(self.dataset.sub_video_splits)))
-        # random.shuffle(indices)
-        
-        # indices_per_rank = len(indices) // self.world_size  #  Data subset size per process
-        # start_idx = self.rank * indices_per_rank
-        # end_idx = (self.rank + 1) * indices_per_rank
-        
-        # self.indices = indices[start_idx:end_idx]  # Video subset of the current process
-        # self.indices = self.dataset.muti_rank_indices_splits[self.rank]
-        self.data_length = self.dataset.per_gpu_total_frames - self.dataset.per_gpu_total_frames%self.batch_size
-
-        print(f"worksize:{self.world_size}, rank: {self.rank}")
-    def __iter__(self):
-
-        self.last_next_frame_index = [None for i in range(int(self.batch_size))]
-        self.next_train_video_index = 0
-        self.indices = self.dataset.muti_rank_indices_splits[self.rank]
-        
-        random.seed(44)
-        random.shuffle(self.indices)
-        
-        self.data_length = self.dataset.per_gpu_total_frames - self.dataset.per_gpu_total_frames%self.batch_size
-        # print(f"sampler init: {len(self.indices)}")
-
-        i = 0
-        for _ in range(self.data_length):
-            if i == self.batch_size:
-                i = 0
-            
-            if self.last_next_frame_index[i] is not None:
-                ix,iy = self.last_next_frame_index[i] # Video indexing and frame indexing
-                index = self.dataset.get_index_from_sub(ix,iy)
-                cur_sampler_is_train = self.dataset.img_video_info[index]["is_train"]
-            else: 
-                cur_sampler_is_train = False
-                
-            if cur_sampler_is_train:                        #Current Video Continue Training
-                yield index
-                if iy + 1 == len(self.dataset.sub_video_splits[ix]):
-                    self.last_next_frame_index[i] = None    #Video training complete.
-                else:
-                    self.last_next_frame_index[i][-1] += 1  #Continue training this video using the next frame
-            else:                                           #Switching Video Training
-                ix, iy = self.indices[self.next_train_video_index], -1
-                self.next_train_video_index += 1
-                if self.next_train_video_index == len(self.indices):
-                    self.next_train_video_index = 0
-
-                is_train = False
-                # if not train, next
-                while(not is_train):
-                    iy += 1
-                    index = self.dataset.get_index_from_sub(ix, iy)
-                    is_train = self.dataset.img_video_info[index]["is_train"]
-                    if iy + 1 == len(self.dataset.sub_video_splits[ix]): 
-                        self.last_next_frame_index[i] = None #Video training complete.
-                    else:
-                        self.last_next_frame_index[i] = [ix, iy+1] #Video Continues Training
-                yield index
-                
-            i += 1
-            
-        self.last_next_frame_index = [None for i in self.last_next_frame_index]
-        self.next_train_video_ix = 0
-        
-    def _epoch_reset(self):
-        self.last_next_frame_index = [None for i in self.last_next_frame_index]
-        self.next_train_video_ix = 0 
-
-    def __len__(self):
-        return self.data_length
-
 import torch
 import random
 from torch.utils.data import Sampler
@@ -146,7 +50,7 @@ class StreamSampler(Sampler):
         
     def __iter__(self):
         # Generate indices for sub-videos (each sub-video is a list of frames)
-        indices = list(range(len(self.dataset.sampler_indices[self.rank])))
+        indices = self.dataset.sampler_indices[self.rank]
         
         # Shuffle if needed (for training)
         if self.seed is not None:
@@ -184,7 +88,56 @@ class StreamSampler(Sampler):
         self.set_epoch(self.epoch)  # Update the epoch in the distributed sampler
 
 
+class VideoSampler(Sampler):
+    '''
+    Streaming Sampling Datasets from Video
+    '''
+    def __init__(self, dataset, batch_size, seed=10, distributed=False):
+        # Check if distributed mode is enabled and process group is already initialized
+        self.dataset = dataset  # self.sub_videos
+        self.batch_size = batch_size
+        self.seed = seed
+        self.epoch = 0
+        self.distributed = distributed
+        
+        if distributed:
+            self.rank = dist.get_rank()  # Get the rank of the current process
+            self.world_size = dist.get_world_size()  # Get the total number of processes
+        else:
+            self.rank = 0
+            self.world_size = 1
+        
+    def __iter__(self):
+        # Generate indices for sub-videos (each sub-video is a list of frames)
+        indices = self.dataset.sampler_indices[self.rank]
+        
+        # Shuffle if needed (for training)
+        if self.seed is not None:
+            rng = random.Random(self.seed + self.epoch)
+            rng.shuffle(indices)
 
+        for i in indices:
+            yield i
+
+    def set_epoch(self, epoch):
+        self.epoch = epoch
+
+    def __len__(self):
+        return len(self.dataset.sampler_indices[self.rank])  # Number of batches
+
+    def _epoch_reset(self):
+        '''
+        Reset for a new epoch: re-calculate the video frame indices and re-shuffle the dataset.
+        This is necessary when the sub-video divisions change.
+        '''
+        # Recalculate the video frame indices if necessary (if you modified all_sub_videos)
+        self.video_frame_indices = self.dataset._get_video_frame_indices()
+
+        # Reset any other internal state as needed
+        self.seed += 1  # Optionally increment the seed for the next epoch
+        self.epoch += 1  # Increment the epoch
+        self.set_epoch(self.epoch)  # Update the epoch in the distributed sampler
+        
 class InfiniteDataLoader(dataloader.DataLoader):
     """
     Dataloader that reuses workers.
@@ -272,8 +225,7 @@ def build_yolo_dataset(cfg, img_path, batch, data, mode="train", rect=False, str
         images_dir = images_dir,
         labels_dir = labels_dir
     )
-
-
+    
 def build_grounding(cfg, img_path, json_file, batch, mode="train", rect=False, stride=32):
     """Build YOLO Dataset."""
     return GroundingDataset(
@@ -301,6 +253,26 @@ def build_dataloader(dataset, batch, workers, shuffle=True, rank=-1):
     nd = torch.cuda.device_count()  # number of CUDA devices
     nw = min(os.cpu_count() // max(nd, 1), workers)  # number of workers
     sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
+    generator = torch.Generator()
+    generator.manual_seed(6148914691236517205 + RANK)
+    return InfiniteDataLoader(
+        dataset=dataset,
+        batch_size=batch,
+        shuffle=shuffle and sampler is None,
+        num_workers=nw,
+        sampler=sampler,
+        pin_memory=PIN_MEMORY,
+        collate_fn=getattr(dataset, "collate_fn", None),
+        worker_init_fn=seed_worker,
+        generator=generator,
+    )
+
+def build_video_dataloader(dataset, batch, workers, shuffle=True, rank=-1):
+    """Return an InfiniteDataLoader or DataLoader for training or validation set."""
+    batch = min(batch, len(dataset))
+    nd = torch.cuda.device_count()  # number of CUDA devices
+    nw = min(os.cpu_count() // max(nd, 1), workers)  # number of workers
+    sampler = VideoSampler(dataset, batch, seed=1, distributed=False) if rank == -1 else VideoSampler(dataset, batch, seed=1, distributed=True)
     generator = torch.Generator()
     generator.manual_seed(6148914691236517205 + RANK)
     return InfiniteDataLoader(
