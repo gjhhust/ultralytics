@@ -18,11 +18,9 @@ pip install yolox
 
 
 # 1
-video_names: ['63', '205', '9', '113', '198', '20', '65', '256', '93', '262', '61', '237', '232', '23', '57', '263', '74', '235', '31', '13']
-frame_numbers: [1220, 992, 686, 344, 354, 164, 374, 170, 318, 1122, 1210, 408, 198, 284, 496, 64, 1276, 656, 114, 134]
-gt_labels shape: torch.Size([20, 3031, 1])
-gt_bboxes shape: torch.Size([20, 3031, 4])
-
+119 211 4
+['/data/jiahaoguo/dataset/gaode_6/images/73/0001184.jpg', '/data/jiahaoguo/dataset/gaode_6/images/211/0000680.jpg', '/data/jiahaoguo/dataset/gaode_6/images/4/0000500.jpg']   
+['/data/jiahaoguo/dataset/gaode_6/images/13/0000104.jpg', '/data/jiahaoguo/dataset/gaode_6/images/238/0001148.jpg', '/data/jiahaoguo/dataset/gaode_6/images/233/0000608.jpg'] 
 ## special case 
  video:198 frame_number:354
 

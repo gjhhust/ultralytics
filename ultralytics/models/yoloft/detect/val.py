@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from ultralytics.nn.modules.memory_buffer import StreamBuffer_onnx 
-from ultralytics.data import build_dataloader, build_yolo_dataset, converter, build_stream_dataloader
+from ultralytics.data import build_dataloader, build_yolo_dataset, converter, build_video_dataloader
 from ultralytics.engine.validator import BaseValidator
 from ultralytics.utils import LOGGER, ops
 from ultralytics.utils.checks import check_requirements
@@ -76,14 +76,8 @@ class DetectionValidator(BaseValidator):
                 for i in range(nb)
             ]
 
-        if self.save_fmaps is not None:
-            _, fmaps_old = self.buffer.update_memory(self.save_fmaps, batch["img_metas"], batch["img"].shape)
-            batch["input"] = (batch["img"], fmaps_old)
-        else:
-            batch["input"] = batch["img"]
-
         return batch
-
+    
     @smart_inference_mode()
     def __call__(self, trainer=None, model=None):
         """Executes validation process, running inference on dataloader and computing performance metrics."""
@@ -149,38 +143,40 @@ class DetectionValidator(BaseValidator):
         bar = TQDM(self.dataloader, desc=self.get_desc(), total=len(self.dataloader))
         self.init_metrics(de_parallel(model))
         self.jdict = []  # empty before each val
-
-        self.buffer = StreamBuffer_onnx(number_feature=3)
-        self.save_fmaps = None
-        for batch_i, batch in enumerate(bar):
+        
+        for batch_i, batch_videos in enumerate(bar):
             self.run_callbacks("on_val_batch_start")
             self.batch_i = batch_i
-            # if batch_i > 5:
-            #     break  # for debugging
-            # Preprocess
-            with dt[0]:
-                batch = self.preprocess(batch)
+            save_fmaps = [None, None, None]
+            print(f"batch_videos: {len(batch_videos)}")
+            # if batch_i>=1:
+            #     break
+            for frame_number, batch in enumerate(batch_videos):
+                # if frame_number>100:
+                #     break
+                # Preprocess
+                with dt[0]:
+                    batch = self.preprocess(batch)
+                        
+                # Inference
+                with dt[1]:
+                    preds, save_fmaps = model((batch["img"], save_fmaps), augment=augment)
 
-            # Inference
-            with dt[1]:
-                # preds = model(batch["img"], augment=augment)
-                preds, self.save_fmaps = model(batch["input"], augment=augment)
+                # Loss
+                with dt[2]:
+                    if self.training:
+                        self.loss += model.loss(batch, (preds, save_fmaps))[0][1]
+                        
+                # Postprocess
+                with dt[3]:
+                    preds = self.postprocess(preds)
 
-            # Loss
-            with dt[2]:
-                if self.training:
-                    self.loss += model.loss(batch, (preds, self.save_fmaps))[0][1]
+                self.update_metrics(preds, batch)
+                if self.args.plots and (batch_i+1) + frame_number < 3:
+                    self.plot_val_samples(batch, (batch_i+1) + frame_number)
+                    self.plot_predictions(batch, preds, (batch_i+1) + frame_number)
 
-            # Postprocess
-            with dt[3]:
-                preds = self.postprocess(preds)
-
-            self.update_metrics(preds, batch)
-            if self.args.plots and batch_i < 3:
-                self.plot_val_samples(batch, batch_i)
-                self.plot_predictions(batch, preds, batch_i)
-
-            self.run_callbacks("on_val_batch_end")
+                self.run_callbacks("on_val_batch_end")
         stats = self.get_stats()
         self.check_stats(stats)
         self.speed = dict(zip(self.speed.keys(), (x.t / len(self.dataloader.dataset) * 1e3 for x in dt)))
@@ -417,7 +413,7 @@ class DetectionValidator(BaseValidator):
         
         #add by guojiahao
         if datasampler == "streamSampler":
-            return build_stream_dataloader(dataset, batch_size, self.args.workers, shuffle = False, rank=-1)  # return dataloader
+            return build_video_dataloader(dataset, batch_size, self.args.workers, shuffle = False, rank=-1)  # return dataloader
         else:
             return build_dataloader(dataset, batch_size, self.args.workers, shuffle = False, rank=-1)  # normalSampler
 

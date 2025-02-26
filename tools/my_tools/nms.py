@@ -73,14 +73,14 @@ def non_max_suppression(
     return output
 
 # 读取json文件
-with open("/data/shuzhengwang/project/ultralytics/runs/save/train81_9.5/val24/predictions.json", 'r') as f:
+with open("/data/jiahaoguo/ultralytics_yoloft/ultralytics/results/4.6_val.json", 'r') as f:
     data = json.load(f)
 
 # 执行NMS
-results = non_max_suppression(data, conf_thres=0.25, iou_thres=0.45, max_det=300)
+results = non_max_suppression(data, conf_thres=0.1, iou_thres=0.75, max_det=300)
 
 # 保存结果到新的json文件中
-with open('/data/shuzhengwang/project/ultralytics/runs/save/train81_9.5/val24/prediction_nms.json', 'w') as f:
+with open('/data/jiahaoguo/ultralytics_yoloft/ultralytics/results/4.6_val_nms.json', 'w') as f:
     json.dump(results, f, indent=2)
 
 print("NMS处理完成，并保存为 .json")

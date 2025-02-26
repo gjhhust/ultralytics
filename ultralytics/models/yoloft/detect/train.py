@@ -7,8 +7,8 @@ from copy import copy
 import os
 import numpy as np
 import torch.nn as nn
-
-from ultralytics.data import build_dataloader, build_yolo_dataset, build_stream_dataloader
+import gc
+from ultralytics.data import build_dataloader, build_yolo_dataset, build_video_dataloader
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.models import yoloft
 from ultralytics.nn.tasks import VideoDetectionModel
@@ -98,7 +98,7 @@ class DetectionTrainer(BaseTrainer):
         #add by guojiahao
         datasampler = self.data.get('datasampler', None)
         if datasampler == "streamSampler":
-            return build_stream_dataloader(dataset, batch_size, workers, shuffle, rank)  # return dataloader
+            return build_video_dataloader(dataset, batch_size, workers, shuffle, rank)  # return dataloader
         else:
             return build_dataloader(dataset, batch_size, workers, shuffle, rank)  # normalSampler
     
@@ -119,15 +119,14 @@ class DetectionTrainer(BaseTrainer):
                 ]  # new shape (stretched to gs-multiple)
                 imgs = nn.functional.interpolate(imgs, size=ns, mode="bilinear", align_corners=False)
             batch["img"] = imgs
-            
-        if self.save_fmaps is not None:
-            _, fmaps_old = self.buffer.update_memory(self.save_fmaps, batch["img_metas"], batch["img"].shape)
-            batch["input"] = (batch["img"], fmaps_old)
-        else:
-            batch["input"] = batch["img"]
         
         return batch
 
+    def preprocess_batch_video(self, batch_video):
+        for i, frame in enumerate(batch_video):
+            batch_video[i] = self.preprocess_batch(frame)
+        return batch_video
+            
     def _do_train(self, world_size=1):
         """Train completed, evaluate and plot if specified by arguments."""
         if world_size > 1:
@@ -167,7 +166,6 @@ class DetectionTrainer(BaseTrainer):
         if isinstance(self.args.train_slit, int):
             self.args.train_slit = [self.args.train_slit]
             
-        nw = -1
         while True:
             self.epoch = epoch
             self.run_callbacks("on_train_epoch_start")
@@ -204,8 +202,7 @@ class DetectionTrainer(BaseTrainer):
             self.tloss = None
             self.loss_sum  = 0
             # torch.autograd.set_detect_anomaly(True)
-            batch_last = None
-            for i, batch in pbar:
+            for i, batch_videos in pbar:
                 self.run_callbacks("on_train_batch_start")
                 # if i > 5:
                 #     break
@@ -224,36 +221,25 @@ class DetectionTrainer(BaseTrainer):
 
                 # Forward
                 with autocast(self.amp):
-                    batch = self.preprocess_batch(batch)
-                    (self.loss, self.loss_items), self.save_fmaps = self.model(batch)
+                    batch_videos = self.preprocess_batch_video(batch_videos)
+                    # print(batch_videos[0]["im_file"])
+                    self.loss, self.loss_items = self.model({"train_video":batch_videos})
 
                     if RANK != -1:
                         self.loss = self.loss*world_size
                         
-                    self.loss_sum =  self.loss_sum + self.loss
+                    # self.loss_sum =  self.loss_sum + self.loss
                     self.tloss = (
                         (self.tloss * i + self.loss_items) / (i + 1) if self.tloss is not None else self.loss_items
                     )
-                if ni <= nw or self.loss_step == 1:
-                    # Backward
-                    self.scaler.scale(self.loss).backward()
-                    self.loss_sum = 0
-                    # Warmup阶段保持原有逻辑
-                    if ni - last_opt_step >= self.accumulate:
-                        self.optimizer_step()
-                        last_opt_step = ni 
-                else:
-                    # 非Warmup阶段使用loss_step控制
-                    current_frame = batch["img_metas"][0]["sub_frame_number"]
-                    assert all(fid["sub_frame_number"] == current_frame for fid in batch["img_metas"]), "not all sub_frame_id are the same"
-                    if current_frame != 0 and batch_last is not None:
-                        assert any([batch["img_metas"][ind]["video_name"]==batch_last["img_metas"][ind]["video_name"] for ind in range(len(batch_last["img_metas"]))]), "not all video_name are the same"
                     
-                    if current_frame + 1 == self.loss_step:
-                        self.scaler.scale(self.loss_sum).backward()
-                        self.optimizer_step()
-                        last_opt_step = ni
-                        self.loss_sum  = 0
+                # Backward
+                self.scaler.scale(self.loss).backward()
+                self.loss_sum = 0
+                # Warmup阶段保持原有逻辑
+                if ni - last_opt_step >= self.accumulate:
+                    self.optimizer_step()
+                    last_opt_step = ni 
 
                 # Log
                 if RANK in {-1, 0}:
@@ -264,30 +250,35 @@ class DetectionTrainer(BaseTrainer):
                             f"{epoch + 1}/{self.epochs}",
                             f"{self._get_memory():.3g}G",  # (GB) GPU memory util
                             *(self.tloss if loss_length > 1 else torch.unsqueeze(self.tloss, 0)),  # losses
-                            batch["cls"].shape[0],  # batch size, i.e. 8
-                            batch["img"].shape[-1],  # imgsz, i.e 640
+                            sum([b["cls"].shape[0] for b in batch_videos]),  # batch size, i.e. 8
+                            batch_videos[0]["img"].shape[-1],  # imgsz, i.e 640
                         )
                     )
                     self.run_callbacks("on_batch_end")
                     if self.args.plots and ni in self.plot_idx:
-                        self.plot_training_samples(batch, ni)
-                    if datasampler == "streamSampler" and self.args.plots:
-                        save_flag = False
-                        if not save_flag and not save_sample_flag and epoch < 1:  
-                            video_batch_list.append(batch["img"].clone().cpu())
-                            bbox_list.append(batch["bboxes"].clone().cpu())
-                            batch_list_idx.append(batch["batch_idx"].clone().cpu())
-                            cls_list.append(batch['cls'].squeeze(-1).clone().cpu())
-                            if len(video_batch_list) == 80: #save 50 frames
-                                save_flag = True
-                        if save_flag and not save_sample_flag:
-                            save_sample_flag = True
-                            self.plot_training_video_samples(video_batch_list,batch,bbox_list,batch_list_idx,cls_list)
-                            save_sample_flag = True #only plot once
-                            
-                self.run_callbacks("on_train_batch_end")
-                batch_last = batch.copy()
+                        self.plot_training_samples(batch_videos[0], ni)
 
+                    if datasampler == "streamSampler" and self.args.plots:
+                        for b_ in batch_videos:
+                            save_flag = False
+                            if not save_flag and not save_sample_flag and epoch < 1:  
+                                video_batch_list.append(b_["img"].clone().cpu())
+                                bbox_list.append(b_["bboxes"].clone().cpu())
+                                batch_list_idx.append(b_["batch_idx"].clone().cpu())
+                                cls_list.append(b_['cls'].squeeze(-1).clone().cpu())
+                                if len(video_batch_list) == 80: #save 50 frames
+                                    save_flag = True
+                            if save_flag and not save_sample_flag:
+                                save_sample_flag = True
+                                self.plot_training_video_samples(video_batch_list,b_,bbox_list,batch_list_idx,cls_list)
+                                save_sample_flag = True #only plot once
+                                del video_batch_list,bbox_list,batch_list_idx,cls_list
+                                
+                self.run_callbacks("on_train_batch_end")
+                
+                gc.collect()
+                del batch_videos
+                
             self.lr = {f"lr/pg{ir}": x["lr"] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
             self.run_callbacks("on_train_epoch_end")
             if RANK in {-1, 0}:
