@@ -1,30 +1,31 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 # Train/val/test sets as 1) dir: path/to/imgs, 2) file: path/to/imgs.txt, or 3) list: [path/to/imgs1, path/to/imgs2, ..]
 datasampler:  streamSampler #使得生成的index和视频关联
-datasetname: YOLOVideoDataset #YOLODataset YOLOVideoDataset
+datasetname: YOLOStreamDataset #YOLOStreamDataset YOLOVideoDataset
+split_mode: length #random all  表示视频切片策略 length时严格按照长度切片， random表示按照长度附近进行波动切片
 
 # train:gaode_5 test:gaode_6
-train: /data/jiahaoguo/dataset/XS-VIDv4/yolo/train.txt
-train_labels_dir: /data/jiahaoguo/dataset/XS-VIDv4/yolo/
-train_images_dir: /data/jiahaoguo/dataset/XS-VIDv4/images/
+train: /data/jiahaoguo/dataset/XS-VIDv2/annotations/yolo/train.txt
+train_labels_dir: /data/jiahaoguo/dataset/XS-VIDv2/annotations/yolo/
+train_images_dir: /data/jiahaoguo/dataset/XS-VIDv2/images/
 
-val: /data/jiahaoguo/dataset/XS-VIDv4/yolo/test.txt
-val_labels_dir: /data/jiahaoguo/dataset/XS-VIDv4/yolo/
-val_images_dir: /data/jiahaoguo/dataset/XS-VIDv4/images/
+val: /data/jiahaoguo/dataset/XS-VIDv2/annotations/yolo/test.txt
+val_labels_dir: /data/jiahaoguo/dataset/XS-VIDv2/annotations/yolo/
+val_images_dir: /data/jiahaoguo/dataset/XS-VIDv2/images/
 
-test: /data/jiahaoguo/dataset/XS-VIDv4/yolo/test.txt
-test_labels_dir: /data/jiahaoguo/dataset/XS-VIDv4/yolo/
-test_images_dir: /data/jiahaoguo/dataset/XS-VIDv4/images/
+test: /data/jiahaoguo/dataset/XS-VIDv2/annotations/yolo/test.txt
+test_labels_dir: /data/jiahaoguo/dataset/XS-VIDv2/annotations/yolo/
+test_images_dir: /data/jiahaoguo/dataset/XS-VIDv2/images/
 
-split_length: [8, 50] #先使用10的片段训练，再50 "all"表示不切割
+split_length: [4] #先使用10的片段训练，再50 "all"表示不切割
 
 
 match_number: 1  #当前帧前后各取一共几个关连帧，match_number=2即前后各取一个
-interval: 4    # 取得帧间隔当前帧
+interval: 2    # 取得帧间隔当前帧
 interval_mode: interval #all：interval也会取尽所有视频 single则all/interval数量
 
 #coco eval
-eval_ann_json: /data/jiahaoguo/dataset/XS-VIDv4/annotations/test.json
+eval_ann_json: /data/jiahaoguo/dataset/XS-VIDv2/annotations/test.json
 classes_map: [0,1,2,3,4,5,6]
 # Classes
 names:
