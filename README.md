@@ -28,9 +28,9 @@ We have released several annotation formats to facilitate subsequent research an
 ## 🛠️ Install
 This repository is build on **[Ultralytics](https://github.com/ultralytics/ultralytics) 8.0.143**  which can be installed by running the following scripts. Please ensure that all dependencies have been satisfied before setting up the environment.
 ```
-conda create --name yoloft python=3.8
+conda create --name yoloft python=3.10
 conda activate yoloft
-pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113
+pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu118
 git clone https://github.com/gjhhust/YOLOFT
 cd YOLOFT
 pip install -r requirements.txt 

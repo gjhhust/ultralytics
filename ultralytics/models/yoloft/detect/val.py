@@ -392,15 +392,19 @@ class DetectionValidator(BaseValidator):
             mode (str): `train` mode or `val` mode, users are able to customize different augmentations for each mode.
             batch (int, optional): Size of batches, this is for `rect`. Defaults to None.
         """
-        if mode == "train":
-            images_dir = self.data["train_images_dir"]
-            labels_dir = self.data["train_labels_dir"]
-        elif mode == "val":
-            images_dir = self.data["val_images_dir"]
-            labels_dir = self.data["val_labels_dir"]
+        if "train_images_dir" in self.data and "train_labels_dir" in self.data:
+            if mode == "train":
+                images_dir = self.data["train_images_dir"]
+                labels_dir = self.data["train_labels_dir"]
+            elif mode == "val":
+                images_dir = self.data["val_images_dir"]
+                labels_dir = self.data["val_labels_dir"]
+            else:
+                images_dir = os.path.join(self.data["path"],self.data["images_dir"])
+                labels_dir = os.path.join(self.data["path"],self.data["labels_dir"])
         else:
-            images_dir = os.path.join(self.data["path"],self.data["images_dir"])
-            labels_dir = os.path.join(self.data["path"],self.data["labels_dir"])
+            images_dir = None
+            labels_dir = None
             
         return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, stride=self.stride,
                                   images_dir=images_dir,
