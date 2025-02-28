@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import gc
 from ultralytics.nn.modules.memory_buffer import StreamBuffer_onnx 
 from ultralytics.data import build_dataloader, build_yolo_dataset, converter, build_video_dataloader
 from ultralytics.engine.validator import BaseValidator
@@ -148,7 +149,7 @@ class DetectionValidator(BaseValidator):
             self.run_callbacks("on_val_batch_start")
             self.batch_i = batch_i
             save_fmaps = [None, None, None]
-            print(f"batch_videos: {len(batch_videos)}")
+            # print(f"batch_videos: {len(batch_videos)}")
             # if batch_i>=1:
             #     break
             for frame_number, batch in enumerate(batch_videos):
@@ -177,6 +178,12 @@ class DetectionValidator(BaseValidator):
                     self.plot_predictions(batch, preds, (batch_i+1) + frame_number)
 
                 self.run_callbacks("on_val_batch_end")
+                
+            if batch_i % 2 == 0: #2500张图片后请理
+                # print(f"clear memory")
+                gc.collect()
+                del batch_videos
+            
         stats = self.get_stats()
         self.check_stats(stats)
         self.speed = dict(zip(self.speed.keys(), (x.t / len(self.dataloader.dataset) * 1e3 for x in dt)))
@@ -387,15 +394,20 @@ class DetectionValidator(BaseValidator):
             mode (str): `train` mode or `val` mode, users are able to customize different augmentations for each mode.
             batch (int, optional): Size of batches, this is for `rect`. Defaults to None.
         """
-        if mode == "train":
-            images_dir = self.data["train_images_dir"]
-            labels_dir = self.data["train_labels_dir"]
-        elif mode == "val":
-            images_dir = self.data["val_images_dir"]
-            labels_dir = self.data["val_labels_dir"]
+        
+        if "train_images_dir" in self.data and "train_labels_dir" in self.data:
+            if mode == "train":
+                images_dir = self.data["train_images_dir"]
+                labels_dir = self.data["train_labels_dir"]
+            elif mode == "val":
+                images_dir = self.data["val_images_dir"]
+                labels_dir = self.data["val_labels_dir"]
+            else:
+                images_dir = os.path.join(self.data["path"],self.data["images_dir"])
+                labels_dir = os.path.join(self.data["path"],self.data["labels_dir"])
         else:
-            images_dir = os.path.join(self.data["path"],self.data["images_dir"])
-            labels_dir = os.path.join(self.data["path"],self.data["labels_dir"])
+            images_dir = None
+            labels_dir = None
             
         return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, stride=self.stride,
                                   images_dir=images_dir,

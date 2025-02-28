@@ -301,7 +301,7 @@ class YOLOVideoDataset(BaseDataset_2):
         
         self.length = -1
         self.epoch = 0
-        self.sub_videos, self.sampler_indices, self.index_mapping_frameinfo  = self.split_sub_videos(self.interval, 10, self.world_size, is_training = self.augment)
+        self.sub_videos, self.sampler_indices, self.index_mapping_frameinfo  = self.split_sub_videos(self.interval, self.data["split_length"][0], self.world_size, is_training = self.augment)
     
     def im_frame_matching(self, im_files):
         # Create a dictionary that groups images by video name

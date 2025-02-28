@@ -276,8 +276,10 @@ class DetectionTrainer(BaseTrainer):
                                 
                 self.run_callbacks("on_train_batch_end")
                 
-                gc.collect()
-                del batch_videos
+                if (i+1)*len(batch_videos) % 2500 < len(batch_videos): #2500张图片后请理
+                    # print('clear memory')
+                    gc.collect()
+                    del batch_videos
                 
             self.lr = {f"lr/pg{ir}": x["lr"] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
             self.run_callbacks("on_train_epoch_end")
