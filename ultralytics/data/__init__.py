@@ -8,6 +8,7 @@ from .dataset import (
     SemanticDataset,
     YOLOConcatDataset,
     YOLODataset,
+    YOLOStreamDataset,
     YOLOMultiModalDataset,
 )
 

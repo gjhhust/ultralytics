@@ -5,7 +5,7 @@ import sys
 
 # 设置要占用的显卡和内存大小
 device_ids = [2,3]
-memory_size = 10 * 1024 * 1024 * 1024  # 20GB
+memory_size = 15 * 1024 * 1024 * 1024  # 20GB
 
 # 用于存储分配的张量
 allocated_tensors = {}
