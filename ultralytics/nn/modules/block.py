@@ -1303,7 +1303,7 @@ class MSTF_STREAM(nn.Module): #
         fmaps_old = x[0]  
         fmaps_new = x[1:]  #3,B,C,H,W The incoming scale must be from large to small
         if fmaps_old == [None, None, None]:
-            fmaps_old = [f.clone() for f in fmaps_new]
+            fmaps_old = [torch.zeros_like(f, device=f.device, dtype=f.dtype) for f in fmaps_new]
         else:
             fmaps_old = [fmap.permute(0, 3, 1, 2) for fmap in fmaps_old]
         
