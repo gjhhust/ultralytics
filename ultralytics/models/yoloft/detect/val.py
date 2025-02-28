@@ -179,10 +179,8 @@ class DetectionValidator(BaseValidator):
 
                 self.run_callbacks("on_val_batch_end")
                 
-            if batch_i % 2 == 0: #2500张图片后请理
-                # print(f"clear memory")
-                gc.collect()
-                del batch_videos
+            gc.collect()
+            del batch_videos
             
         stats = self.get_stats()
         self.check_stats(stats)
@@ -394,7 +392,6 @@ class DetectionValidator(BaseValidator):
             mode (str): `train` mode or `val` mode, users are able to customize different augmentations for each mode.
             batch (int, optional): Size of batches, this is for `rect`. Defaults to None.
         """
-        
         if "train_images_dir" in self.data and "train_labels_dir" in self.data:
             if mode == "train":
                 images_dir = self.data["train_images_dir"]

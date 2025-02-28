@@ -9,7 +9,7 @@ import torch
 from PIL import Image
 from torch.utils.data import dataloader, distributed
 
-from ultralytics.data.dataset import GroundingDataset, YOLODataset, YOLOVideoDataset, YOLOMultiModalDataset
+from ultralytics.data.dataset import GroundingDataset, YOLODataset, YOLOVideoDataset, YOLOMultiModalDataset, YOLOStreamDataset
 from ultralytics.data.loaders import (
     LOADERS,
     LoadImagesAndVideos,
@@ -28,64 +28,100 @@ import torch
 import random
 from torch.utils.data import Sampler
 import torch.distributed as dist
+from torch.utils.data.distributed import DistributedSampler
+import torch.distributed as dist
 
-class StreamSampler(Sampler):
+class StreamSampler(DistributedSampler):
     '''
     Streaming Sampling Datasets from Video
     '''
-    def __init__(self, dataset, batch_size, seed=10, distributed=False):
-        # Check if distributed mode is enabled and process group is already initialized
-        self.dataset = dataset  # self.sub_videos
+    def __init__(self, dataset, batch_size, seed=10,distributed=False):
+        self.dataset = dataset
         self.batch_size = batch_size
+
         self.seed = seed
-        self.epoch = 0
-        self.distributed = distributed
-        
         if distributed:
             self.rank = dist.get_rank()  # Get the rank of the current process
             self.world_size = dist.get_world_size()  # Get the total number of processes
         else:
             self.rank = 0
             self.world_size = 1
-        
-    def __iter__(self):
-        # Generate indices for sub-videos (each sub-video is a list of frames)
-        indices = self.dataset.sampler_indices[self.rank]
-        
-        # Shuffle if needed (for training)
-        if self.seed is not None:
-            rng = random.Random(self.seed + self.epoch)
-            rng.shuffle(self.dataset.videos_info)
-        
-        self.data_length = len(indices) // self.batch_size
-        yiled_indices = np.array(indices).reshape((self.batch_size, self.data_length)).T.flatten()
-        # Batch alignment: ensure each batch contains 'batch_size' sub-videos, and each sub-video has one frame
-        assert (len(indices) % self.batch_size) == 0, "Number of sub-videos is not divisible by batch size"
-        
-        if self.dataset.augment:
-            assert (len(indices)//self.batch_size) % self.dataset.length == 0, "Number of sub-videos is not divisible by batch size"
-                
-        for i in yiled_indices:
-            yield i
+            
+        self.last_next_frame_index = [None for i in range(int(batch_size))]
+        self.next_train_video_index = 0
 
-    def set_epoch(self, epoch):
-        self.epoch = epoch
+        # random.seed(self.seed)
+        # indices = list(range(len(self.dataset.sub_video_splits)))
+        # random.shuffle(indices)
+        
+        # indices_per_rank = len(indices) // self.world_size  #  Data subset size per process
+        # start_idx = self.rank * indices_per_rank
+        # end_idx = (self.rank + 1) * indices_per_rank
+        
+        # self.indices = indices[start_idx:end_idx]  # Video subset of the current process
+        # self.indices = self.dataset.muti_rank_indices_splits[self.rank]
+        self.data_length = self.dataset.per_gpu_total_frames - self.dataset.per_gpu_total_frames%self.batch_size
+
+        print(f"worksize:{self.world_size}, rank: {self.rank}")
+    def __iter__(self):
+
+        self.last_next_frame_index = [None for i in range(int(self.batch_size))]
+        self.next_train_video_index = 0
+        self.indices = self.dataset.muti_rank_indices_splits[self.rank]
+        
+        random.seed(44)
+        random.shuffle(self.indices)
+        
+        self.data_length = self.dataset.per_gpu_total_frames - self.dataset.per_gpu_total_frames%self.batch_size
+        # print(f"sampler init: {len(self.indices)}")
+
+        i = 0
+        for _ in range(self.data_length):
+            if i == self.batch_size:
+                i = 0
+            
+            if self.last_next_frame_index[i] is not None:
+                ix,iy = self.last_next_frame_index[i] # Video indexing and frame indexing
+                index = self.dataset.get_index_from_sub(ix,iy)
+                cur_sampler_is_train = self.dataset.img_video_info[index]["is_train"]
+            else: 
+                cur_sampler_is_train = False
+                
+            if cur_sampler_is_train:                        #Current Video Continue Training
+                yield index
+                if iy + 1 == len(self.dataset.sub_video_splits[ix]):
+                    self.last_next_frame_index[i] = None    #Video training complete.
+                else:
+                    self.last_next_frame_index[i][-1] += 1  #Continue training this video using the next frame
+            else:                                           #Switching Video Training
+                ix, iy = self.indices[self.next_train_video_index], -1
+                self.next_train_video_index += 1
+                if self.next_train_video_index == len(self.indices):
+                    self.next_train_video_index = 0
+
+                is_train = False
+                # if not train, next
+                while(not is_train):
+                    iy += 1
+                    index = self.dataset.get_index_from_sub(ix, iy)
+                    is_train = self.dataset.img_video_info[index]["is_train"]
+                    if iy + 1 == len(self.dataset.sub_video_splits[ix]): 
+                        self.last_next_frame_index[i] = None #Video training complete.
+                    else:
+                        self.last_next_frame_index[i] = [ix, iy+1] #Video Continues Training
+                yield index
+                
+            i += 1
+            
+        self.last_next_frame_index = [None for i in self.last_next_frame_index]
+        self.next_train_video_ix = 0
+        
+    def _epoch_reset(self):
+        self.last_next_frame_index = [None for i in self.last_next_frame_index]
+        self.next_train_video_ix = 0 
 
     def __len__(self):
-        return self.data_length  # Number of batches
-
-    def _epoch_reset(self):
-        '''
-        Reset for a new epoch: re-calculate the video frame indices and re-shuffle the dataset.
-        This is necessary when the sub-video divisions change.
-        '''
-        # Recalculate the video frame indices if necessary (if you modified all_sub_videos)
-        self.video_frame_indices = self.dataset._get_video_frame_indices()
-
-        # Reset any other internal state as needed
-        self.seed += 1  # Optionally increment the seed for the next epoch
-        self.epoch += 1  # Increment the epoch
-        self.set_epoch(self.epoch)  # Update the epoch in the distributed sampler
+        return self.data_length
 
 
 class VideoSampler(Sampler):
@@ -203,6 +239,8 @@ def build_yolo_dataset(cfg, img_path, batch, data, mode="train", rect=False, str
         dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
     elif datasetname == "YOLOVideoDataset":
         dataset = YOLOVideoDataset
+    elif datasetname == "YOLOStreamDataset":
+        dataset = YOLOStreamDataset
     else:
         dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
         
