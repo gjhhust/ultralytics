@@ -1184,12 +1184,15 @@ def plot_video(
         if not init_flag:
             height, width,_ = img_array.shape
             init_flag = True
-            video_writer = cv2.VideoWriter(os.path.join(save_dir,f"batch.mp4"),  cv2.VideoWriter_fourcc(*"mp4v"), 10, (height, width))
+            video_path = os.path.join(save_dir,f"batch.mp4")
+            if os.path.exists(video_path):
+                video_path = os.path.join(save_dir,f"batch_close_masic.mp4")
+            video_writer = cv2.VideoWriter(video_path,  cv2.VideoWriter_fourcc(*"mp4v"), 10, (height, width))
         video_writer.write(img_array)
         # if on_plot:
         #     on_plot(fname)
     video_writer.release()
-    print("video save done: ", os.path.join(save_dir,f"batch.mp4"))
+    print("video save done: ", video_path)
 
 
 @threaded

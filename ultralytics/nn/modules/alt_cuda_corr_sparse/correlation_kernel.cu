@@ -237,8 +237,14 @@ __global__ void corr_backward_kernel(
             int c2 = tid % CHANNEL_STRIDE;
 
             scalar_t* fptr = &fmap2_grad[b][h2][w2][0];
-            if (within_bounds(h2, w2, H2, W2))
-              atomicAdd(fptr+c+c2, f2_grad[c2][k1]);
+            if (within_bounds(h2, w2, H2, W2)) {
+              if constexpr (std::is_same<scalar_t, at::Half>::value) {
+                atomicAdd(reinterpret_cast<float*>(&fmap2_grad[b][h2][w2][c+c2]),
+                         __half2float(f2_grad[c2][k1]));
+              } else {
+                atomicAdd(&fmap2_grad[b][h2][w2][c+c2], f2_grad[c2][k1]);
+              }
+            }
           }
         }
       } 
@@ -259,8 +265,7 @@ __global__ void corr_backward_kernel(
   }
 }
 
-
-
+template <typename scalar_t>
 std::vector<torch::Tensor> corr_cuda_forward(
   torch::Tensor fmap1,
   torch::Tensor fmap2,
@@ -273,22 +278,23 @@ std::vector<torch::Tensor> corr_cuda_forward(
   const auto W = coords.size(3);
 
   const auto rd = 2 * radius + 1;
-  auto opts = fmap1.options();
+  auto opts = fmap1.options().dtype(fmap1.dtype());
   auto corr = torch::zeros({B, N, rd*rd, H, W}, opts);
   
   const dim3 blocks(B, (H+BLOCK_H-1)/BLOCK_H, (W+BLOCK_W-1)/BLOCK_W);
   const dim3 threads(BLOCK_H, BLOCK_W);
 
-  corr_forward_kernel<float><<<blocks, threads>>>(
-    fmap1.packed_accessor32<float,4,torch::RestrictPtrTraits>(),
-    fmap2.packed_accessor32<float,4,torch::RestrictPtrTraits>(),
-    coords.packed_accessor32<float,5,torch::RestrictPtrTraits>(),
-    corr.packed_accessor32<float,5,torch::RestrictPtrTraits>(),
+  corr_forward_kernel<scalar_t><<<blocks, threads>>>(
+    fmap1.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+    fmap2.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+    coords.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
+    corr.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
     radius, stride);
 
   return {corr};
 }
 
+template <typename scalar_t>
 std::vector<torch::Tensor> corr_cuda_backward(
   torch::Tensor fmap1,
   torch::Tensor fmap2,
@@ -306,23 +312,40 @@ std::vector<torch::Tensor> corr_cuda_backward(
   const auto C = fmap1.size(3);
 
   auto opts = fmap1.options();
-  auto fmap1_grad = torch::zeros({B, H1, W1, C}, opts);
-  auto fmap2_grad = torch::zeros({B, H2, W2, C}, opts);
-  auto coords_grad = torch::zeros({B, N, H1, W1, 2}, opts);
+  auto fmap1_grad = torch::zeros_like(fmap1);
+  auto fmap2_grad = torch::zeros_like(fmap2);
+  auto coords_grad = torch::zeros_like(coords);
     
   const dim3 blocks(B, (H1+BLOCK_H-1)/BLOCK_H, (W1+BLOCK_W-1)/BLOCK_W);
   const dim3 threads(BLOCK_H, BLOCK_W);
 
-
-  corr_backward_kernel<float><<<blocks, threads>>>(
-    fmap1.packed_accessor32<float,4,torch::RestrictPtrTraits>(),
-    fmap2.packed_accessor32<float,4,torch::RestrictPtrTraits>(),
-    coords.packed_accessor32<float,5,torch::RestrictPtrTraits>(),
-    corr_grad.packed_accessor32<float,5,torch::RestrictPtrTraits>(),
-    fmap1_grad.packed_accessor32<float,4,torch::RestrictPtrTraits>(),
-    fmap2_grad.packed_accessor32<float,4,torch::RestrictPtrTraits>(),
-    coords_grad.packed_accessor32<float,5,torch::RestrictPtrTraits>(),
+  corr_backward_kernel<scalar_t><<<blocks, threads>>>(
+    fmap1.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+    fmap2.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+    coords.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
+    corr_grad.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
+    fmap1_grad.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+    fmap2_grad.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),  
+    coords_grad.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
     radius, stride);
 
   return {fmap1_grad, fmap2_grad, coords_grad};
 }
+
+
+// 显式实例化模板（文件末尾）
+template __global__ void corr_forward_kernel<float>(
+  const torch::PackedTensorAccessor32<float,4,torch::RestrictPtrTraits>,
+  const torch::PackedTensorAccessor32<float,4,torch::RestrictPtrTraits>,
+  const torch::PackedTensorAccessor32<float,5,torch::RestrictPtrTraits>,
+  torch::PackedTensorAccessor32<float,5,torch::RestrictPtrTraits>,
+  int, int
+);
+
+template __global__ void corr_forward_kernel<at::Half>(
+  const torch::PackedTensorAccessor32<at::Half,4,torch::RestrictPtrTraits>,
+  const torch::PackedTensorAccessor32<at::Half,4,torch::RestrictPtrTraits>,
+  const torch::PackedTensorAccessor32<at::Half,5,torch::RestrictPtrTraits>, // coords仍用float
+  torch::PackedTensorAccessor32<at::Half,5,torch::RestrictPtrTraits>,
+  int, int
+);
