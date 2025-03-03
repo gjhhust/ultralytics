@@ -1400,7 +1400,6 @@ class MSTF_STREAM_cbam(nn.Module): #
         )
 
         self.jian2 = nn.Sequential(
-            CBAM(int(in_channels[0] * width), kernel_size=7),  # 添加 CBAM 模块
             conv(
                 int(in_channels[0] * width),
                 int(in_channels[0] * width) // 2,
@@ -1411,7 +1410,6 @@ class MSTF_STREAM_cbam(nn.Module): #
         )
 
         self.jian1 = nn.Sequential(
-            CBAM(int(in_channels[1] * width), kernel_size=7),  # 添加 CBAM 模块
             conv(
             int(in_channels[1] * width),
             int(in_channels[1] * width) // 2,
@@ -1421,9 +1419,7 @@ class MSTF_STREAM_cbam(nn.Module): #
                 )
         )
         
-
         self.jian0 = nn.Sequential(
-            CBAM(int(in_channels[2] * width), kernel_size=7),  # 添加 CBAM 模块
             conv(
             int(in_channels[2] * width),
             int(in_channels[2] * width) // 2,
@@ -1446,7 +1442,9 @@ class MSTF_STREAM_cbam(nn.Module): #
         fmaps_old = x[0]  
         fmaps_new = x[1:]  #3,B,C,H,W The incoming scale must be from large to small
         if fmaps_old == [None, None, None]:
-            fmaps_old = [f.clone().detach() for f in fmaps_new]
+            fmaps_old = [torch.zeros_like(f, device=f.device, dtype=f.dtype) for f in fmaps_new]
+        else:
+            fmaps_old = [fmap.permute(0, 3, 1, 2) for fmap in fmaps_old]
         
         [fmap2, fmap1, fmap0] = fmaps_old
         [rurrent_x2, rurrent_x1, rurrent_x0] = fmaps_new
@@ -1478,3 +1476,242 @@ class MSTF_STREAM_cbam(nn.Module): #
         
         return [pan_out2, pan_out1, pan_out0]
 
+class ADown(nn.Module):
+    def __init__(self, cx, cy, cout):
+        super().__init__()
+        self.c = cout // 2
+        self.cv1 = flow_conv(cx // 2, self.c, 3, 2, 1)
+        self.cv2 = flow_conv(cx // 2 + cy, self.c, 1, 1, 0)
+
+    def forward(self, x, y):
+        x = torch.nn.functional.avg_pool2d(x, 2, 1, 0, False, True)
+        x1, x2 = x.chunk(2, 1)
+        x1 = self.cv1(x1)
+        x2 = torch.nn.functional.max_pool2d(x2, 3, 2, 1)
+        x2 = self.cv2(torch.cat((x2, y), 1))
+        return torch.cat((x1, x2), 1)
+
+class FlowDown(nn.Module):
+    def __init__(self, c_4, c_2, c ,cout):
+        super().__init__()
+        self.c = cout // 2
+        half_c_4 = math.ceil(c_4 / 2)
+        half_c_2 = math.ceil(c_2 / 2)
+        half_c = math.ceil(c / 2)
+
+        half_c_4_1 = c_4 // 2
+        half_c_2_1 = c_2 // 2
+        half_c_1 = c // 2
+
+        self.cv1 = flow_conv(half_c_4, self.c, 3, 2, 1)
+        self.cv2 = flow_conv(half_c_4+half_c_2, self.c, 3, 2, 1)
+
+        self.cv3 = flow_conv(self.c + half_c, self.c, 1, 1, 0)
+        self.cv4 = flow_conv(half_c_1 + half_c_4_1 + half_c_2_1, self.c, 1, 1, 0)
+
+    def forward(self, f_4, f_2, f):
+        f_4 = torch.nn.functional.avg_pool2d(f_4, 2, 1, 0, False, True)
+        f4_1, f4_2 = f_4.chunk(2, 1)
+        f4_1 = self.cv1(f4_1)
+        f4_2 = torch.nn.functional.max_pool2d(f4_2, 3, 2, 1)
+
+        f_2 = torch.nn.functional.avg_pool2d(f_2, 2, 1, 1, False, True)[:,:,:f4_1.shape[2], :f4_1.shape[3]]
+        f2_1, f2_2 = f_2.chunk(2, 1)
+        f2_1 = self.cv2(torch.cat((f2_1, f4_1), 1))
+
+        f2_2 = torch.nn.functional.max_pool2d(f2_2, 3, 2, 1)
+        f4_2 = torch.nn.functional.max_pool2d(f4_2, 3, 2, 1)
+        
+        f1, f2 = f.chunk(2, 1)
+
+        f1 = self.cv3(torch.cat((f2_1, f1), 1))
+        f2 = self.cv4(torch.cat((f2_2, f4_2, f2), 1))
+
+        return torch.cat((f1, f2), 1)
+    
+class ConvTranspose(nn.Module):
+    def __init__(self, c1, c2, kernel_size, stride, padding, output_padding=0):
+        super().__init__()
+        self.conv = nn.ConvTranspose2d(c1, c2, kernel_size, stride, padding, output_padding=output_padding, bias=False)
+        # self.norm = nn.GroupNorm(1, c2)  # 分组数为1，每个分组包含一个通道
+        self.norm = nn.Identity()
+        # self.act = nn.ReLU(inplace=True)
+        self.act = nn.SiLU()
+    
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.norm(x)
+        return self.act(x)
+
+class FlowUp(nn.Module):
+    def __init__(self, cx, cy, cout):
+        super().__init__()
+        self.c = cout // 2
+        half_x = math.ceil(cx / 2)
+        half_x_2 = cx // 2
+        self.cv1 = ConvTranspose(half_x, self.c, 3, 2, 1, 1)
+        self.cv2 = flow_conv(half_x_2 + cy, self.c, 3, 1, 1)
+        self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
+
+    def forward(self, x, y):
+        x1, x2 = x.chunk(2, 1)
+        x1 = self.cv1(x1)
+        x2 = self.upsample(x2)
+        x2 = self.cv2(torch.cat((x2, y), 1))
+        return torch.cat((x1, x2), 1)
+
+
+from ultralytics.nn.modules.flow import CorrBlock, AlternateCorrBlock, initialize_flow,SepConvGRU,  BasicUpdateBlock, SmallNetUpdateBlock,  NetUpdateBlock, SmallUpdateBlock, warp_feature, ConvGRU
+
+class MSTF_FLOW(nn.Module): #
+    def __init__(self, inchannle, hidden_dim=64, epoch_train=22, stride=[2,2,2], radius=[3,3,3], n_levels=3, iter_max=2, method = "method1", motion_flow = True, aux_loss = False):
+        '''
+        input_dim  dim of the backbone features.
+        hidden_dim Memorizing hidden and input layers
+        n_levels Number of multi-scale feature maps
+        epoch_train start fused 
+        iter_max Number of iterations
+        '''
+        super(MSTF_FLOW, self).__init__()
+        input_dim = inchannle[0] 
+
+        if not (input_dim//2 >= hidden_dim):
+            print("************warning****************")
+            print(f"input_dim//2 need bigger than hidden_dim, {inchannle},{hidden_dim}") 
+            print("***********************************")
+
+        self.inchannle = inchannle
+
+        self.hidden_dim = hidden_dim # input_dim//2
+        self.iter_max = iter_max
+        self.n_levels = n_levels
+        self.radius = radius
+        self.stride = stride
+        self.epoch_train = epoch_train
+        self.method = method
+        self.aux_loss = aux_loss
+        self.motion_flow = motion_flow
+        self.cor_planes = [n_levels * (2*radiu + 1)**2 for radiu in radius]
+
+
+        self.convs1 = nn.ModuleList([flow_conv(inchannle[i], self.hidden_dim, 1) 
+                                    for i in range(n_levels)])
+        
+        self.convs2 = nn.ModuleList([flow_conv(self.hidden_dim + self.hidden_dim//2, inchannle[i], 1) 
+                                    for i in range(n_levels)])  # optional act=FReLU(c2)
+        
+        # buffer
+        self.buffer = FlowBuffer("MemoryAtten", number_feature=n_levels)
+
+        cor_plane = self.cor_planes[1]
+        self.cor_plane = cor_plane
+        self.cor_plane = 2*(self.cor_plane//2) #Guaranteed to be even.
+
+        self.flow_fused0 = FlowUp(self.cor_planes[2], self.cor_planes[1], self.cor_plane)
+        self.flow_fused1 = FlowUp(self.cor_plane,self.cor_planes[0], self.cor_plane)
+        
+        self.flow_fused2 = FlowDown(self.cor_plane ,self.cor_plane, self.cor_planes[2], self.cor_plane)
+        
+        self.update_block = SmallNetUpdateBlock(input_dim=self.hidden_dim//2, hidden_dim=self.hidden_dim//2, cor_plane = self.cor_plane)
+
+        self.plot = False
+        self.save_dir = "./MSTF_saveDir"
+        self.pad_image_func = None
+        
+        
+
+    def forward(self,x):
+        # self.plot = True
+        fmaps_old = x[0]  
+        fmaps_new = x[1:]  #3,B,C,H,W The incoming scale must be from large to small
+        if fmaps_old == [None, None, None]:
+            fmaps_old = [torch.zeros_like(f, device=f.device, dtype=f.dtype) for f in fmaps_new]
+        else:
+            fmaps_old = [fmap.permute(0, 3, 1, 2) for fmap in fmaps_old]
+
+        # Gradient triage, dimensional consistency
+        out_list = []
+        fmaps_new = []
+        inp = []
+        for i in range(self.n_levels):
+            out, fmap = self.convs1[i](x[1:][i]).chunk(2, 1)
+            # out, fmap = self.convs0[i](x[1:][i]).chunk(2, 1) #128,128
+            # fmap = self.convs1[i](fmap) #hidden
+            out_list.append(out)
+            fmaps_new.append(fmap)
+            inp.append(torch.relu(fmap))
+            
+        if not self.training and self.plot:
+            video_name = img_metas[0]["video_name"]
+            save_dir = os.path.join(self.save_dir, video_name)
+            os.makedirs(save_dir, exist_ok=True)
+            image_path = img_metas[0]["image_path"]
+
+            image = cv2.imread(image_path)
+            image,_ = self.pad_image_func(image)
+            height, width, _ = image.shape
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                
+            if img_metas[0]["is_first"]:
+                if hasattr(self, "video_writer_fea"):
+                    self.video_writer_fea.release()
+                self.number = 0
+                self.video_writer_fea = cv2.VideoWriter(os.path.join(save_dir, "feature_fused.mp4"), fourcc, 25, (width, height))
+                
+        src_flatten_new, spatial_shapes, level_start_index = self.buffer.flatten(fmaps_new, True)
+        result_first_frame, fmaps_old, net_old, coords0, coords1, topk_bbox = self.buffer.update_memory(src_flatten_new, img_metas, spatial_shapes, level_start_index)
+
+        corr_fn_muti = []
+        for lvl in range(self.n_levels):
+            corr_fn_muti.append(AlternateCorrBlock(fmaps_new[lvl], fmaps_old, self.n_levels, self.radius[lvl], self.stride))
+
+        # 1/32
+        lvl = 2
+        corr_32 = corr_fn_muti[lvl](coords1[lvl])
+        flow_32 = coords1[lvl] - coords0[lvl]
+        
+        # 1/16
+        lvl = 1
+        corr_16 = corr_fn_muti[lvl](coords1[lvl])
+        flow_16 = coords1[lvl] - coords0[lvl]
+        corr_16_fused = self.flow_fused0(corr_32, corr_16)
+        net_16, _, delta_flow = self.update_block(net_old[lvl], inp[lvl], corr_16_fused, flow_16)
+        coords1[lvl] = coords1[lvl] + delta_flow
+
+        # 1/8
+        lvl = 0
+        corr_8 = corr_fn_muti[lvl](coords1[lvl])
+        flow_8 = coords1[lvl] - coords0[lvl]
+        corr_8_fused = self.flow_fused1(corr_16_fused, corr_8)
+        net_8, _, delta_flow = self.update_block(net_old[lvl], inp[lvl], corr_8_fused, flow_8)
+        coords1[lvl] = coords1[lvl] + delta_flow
+        corr_8To32 = F.interpolate(corr_8_fused, scale_factor=1/4, mode="bilinear", align_corners=True)
+        corr_16To32 = F.interpolate(corr_16_fused, scale_factor=1/2, mode="bilinear", align_corners=True)
+
+        # 1/32
+        lvl = 2
+        corr_32_fused = self.flow_fused2(corr_8_fused, corr_16_fused, corr_32)
+        net_32, _, delta_flow = self.update_block(net_old[lvl], inp[lvl], corr_32_fused, flow_32)
+        coords1[lvl] = coords1[lvl] + delta_flow
+
+        #get coords1\net_8\net_16\net_32
+        net = [net_8, net_16, net_32]
+        self.buffer.update_coords(coords1)
+        self.buffer.update_net(net)
+            
+        for i in range(self.n_levels):
+            # if not self.training and self.plot:
+            #     np.save(os.path.join(flow_dir, f'level_{i}_{frame_number}.npy'), (coords1[i]-coords0[i]).cpu().numpy())
+            #     print(torch.sum(coords1[i]-coords0[i]))
+            #     np.save(os.path.join(net_dir, f'level_{i}_{frame_number}.npy'), net[i].cpu().numpy())
+            fmaps_new[i] = self.convs2[i](torch.cat([out_list[i],fmaps_new[i],net[i]], 1)) + x[1:][i]
+            # if not self.training and self.plot:
+            #     np.save(os.path.join(feature_fused_dir,  f'level_{i}_{frame_number}.npy'), fmaps_new[i].cpu().numpy())
+
+        if not self.training and self.plot:
+            # overlay_heatmap_on_video(self.video_writer_flow, image, coords1)
+            # overlay_heatmap_on_video(self.video_writer_net, image, net)
+            overlay_heatmap_on_video(self.video_writer_fea, image, fmaps_new)
+            self.number+=1
+            
+        return fmaps_new

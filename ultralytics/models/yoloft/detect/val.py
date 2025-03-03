@@ -79,6 +79,17 @@ class DetectionValidator(BaseValidator):
 
         return batch
     
+        
+    def _clear_memory(self):
+        """Clear accelerator memory on different platforms."""
+        gc.collect()
+        if self.device.type == "mps":
+            torch.mps.empty_cache()
+        elif self.device.type == "cpu":
+            return
+        else:
+            torch.cuda.empty_cache()
+
     @smart_inference_mode()
     def __call__(self, trainer=None, model=None):
         """Executes validation process, running inference on dataloader and computing performance metrics."""
@@ -179,8 +190,10 @@ class DetectionValidator(BaseValidator):
 
                 self.run_callbacks("on_val_batch_end")
                 
-            gc.collect()
-            del batch_videos
+                if frame_number == len(batch_videos)//2:
+                    self._clear_memory()
+                
+            self._clear_memory()
             
         stats = self.get_stats()
         self.check_stats(stats)

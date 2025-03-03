@@ -120,6 +120,15 @@ class DetectionTrainer(BaseTrainer):
             batch["img"] = imgs
         return batch
 
+    def _close_dataloader_mosaic(self):
+        """Update dataloaders to stop using mosaic augmentation."""
+        if hasattr(self.train_loader.dataset, "mosaic"):
+            self.train_loader.dataset.mosaic = False
+        if hasattr(self.train_loader.dataset, "close_mosaic"):
+            LOGGER.info("Closing dataloader mosaic")
+            self.train_loader.dataset.close_mosaic(hyp=copy(self.args))
+            self.save_sample_flag = False
+            
     def _do_train(self, world_size=1):
         """Train completed, evaluate and plot if specified by arguments."""
         if world_size > 1:
@@ -131,7 +140,7 @@ class DetectionTrainer(BaseTrainer):
         bbox_list = []
         batch_list_idx = []
         cls_list = []
-        save_sample_flag = False
+        self.save_sample_flag = False
         
         nb = len(self.train_loader)  # number of batches
         nw = max(round(self.args.warmup_epochs * nb), 100) if self.args.warmup_epochs > 0 else -1  # warmup iterations
@@ -248,17 +257,21 @@ class DetectionTrainer(BaseTrainer):
                         self.plot_training_samples(batch, ni)
                     if datasampler == "streamSampler" and self.args.plots:
                         save_flag = False
-                        if not save_flag and not save_sample_flag and epoch < 1:  
+                        if not save_flag and not self.save_sample_flag:  
                             video_batch_list.append(batch["img"].clone().cpu())
                             bbox_list.append(batch["bboxes"].clone().cpu())
                             batch_list_idx.append(batch["batch_idx"].clone().cpu())
                             cls_list.append(batch['cls'].squeeze(-1).clone().cpu())
                             if len(video_batch_list) == 80: #save 50 frames
                                 save_flag = True
-                        if save_flag and not save_sample_flag:
-                            save_sample_flag = True
+                        if save_flag and not self.save_sample_flag:
+                            self.save_sample_flag = True
                             self.plot_training_video_samples(video_batch_list,batch,bbox_list,batch_list_idx,cls_list)
-                            save_sample_flag = True #only plot once
+                            video_batch_list = []
+                            bbox_list = []
+                            batch_list_idx = []
+                            cls_list = []
+                            self.save_sample_flag = True #only plot once
                             
                 self.run_callbacks("on_train_batch_end")
 

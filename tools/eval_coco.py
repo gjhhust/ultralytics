@@ -1,11 +1,12 @@
 from pycocotools.coco import COCO  # noqa
 # from pycocotools.cocoeval import COCOeval  # noqa
-from ultralytics.data.cocoeval import COCOeval  # noqa
+from ultralytics.data.cocoeval_xs_vid import COCOeval  # noqa
 
 # anno_json = "/data/jiahaoguo/dataset/speed_merge/merge_test_1.json"
 # pred_json = "/data/jiahaoguo/YOLOFT/yoloft/train53/predictions.json"
-anno_json = "/data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
-pred_json = "/data/jiahaoguo/ultralytics_yoloft/ultralytics/runs/detect/val8/predictions.json"
+# anno_json = "/data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
+anno_json = "/data/jiahaoguo/dataset/XS-VIDv2/annotations/merge_V2V1/test.json"
+pred_json = "/data/jiahaoguo/ultralytics_yoloft/ultralytics/results/streamyolo-L_22.4.json"
 
 # 27.8 38.5 34.0 0.5 9.5 53.2 26.3 66.4 43.3
 # 8.9 13.8 9.2 1.0 11.0 19.3 3.2 27.5 27.6
