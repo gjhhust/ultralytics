@@ -20,7 +20,7 @@ test_images_dir: /data/jiahaoguo/dataset/gaode_6/images/
 split_length: [9] #先使用10的片段训练，再50 "all"表示不切割
 
 match_number: 1  #当前帧前后各取一共几个关连帧，match_number=2即前后各取一个
-interval: 4    # 取得帧间隔当前帧
+interval: 2    # 取得帧间隔当前帧
 interval_mode: interval #all：interval也会取尽所有视频 single则all/interval数量
 
 #coco eval

@@ -421,6 +421,13 @@ class YOLOVideoDataset(BaseDataset_2):
         LOGGER.info(f"now train dataset convert to split_length: {self.data['split_length'][index]}   mode: split_length")
         self.sub_videos, self.sampler_indices, self.index_mapping_frameinfo = self.split_sub_videos(self.interval, length=self.data["split_length"][index], 
                                                                         gpu_count = self.world_size, is_training = self.augment)
+
+    def close_mosaic(self, hyp):
+        """Sets mosaic, copy_paste and mixup options to 0.0 and builds transformations."""
+        hyp.mosaic = 0.0  # set mosaic ratio=0.0
+        hyp.copy_paste = 0.0  # keep the same behavior as previous v8 close-mosaic
+        hyp.mixup = 0.0  # keep the same behavior as previous v8 close-mosaic
+        self.transforms = self.build_transforms(hyp)
         
     def cache_labels(self, path=Path("./labels.cache")):
         """
