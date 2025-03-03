@@ -595,37 +595,6 @@ class VideoDetectionModel(BaseModel):
                     return torch.unbind(torch.cat(embeddings, 1), dim=0)
         return x, [f.permute(0, 2, 3, 1) for f in y[13]]  # return output
     
-    def _predict_video(self, video_x, profile=False, visualize=False, embed=None):
-        """
-        Perform a forward pass through the network.
-
-        Args:
-            x (torch.Tensor): The input tensor to the model.
-            profile (bool):  Print the computation time of each layer if True, defaults to False.
-            visualize (bool): Save the feature maps of the model if True, defaults to False.
-            embed (list, optional): A list of feature vectors/embeddings to return.
-            return_fmaps_id(int, optional): A list of layer indices to return feature maps for as buffers.
-
-        Returns:
-            (torch.Tensor): The last output of the model.
-        """
-        for x in video_x:
-            y, dt, embeddings = [], [], []  # outputs
-            for m in self.model:
-                if m.f != -1:  # if not from previous layer
-                    x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
-                if profile:
-                    self._profile_one_layer(m, x, dt)
-                x = m(x)  # run
-                y.append(x if m.i in self.save else None)  # save output
-                if visualize:
-                    feature_visualization(x, m.type, m.i, save_dir=visualize)
-                if embed and m.i in embed:
-                    embeddings.append(nn.functional.adaptive_avg_pool2d(x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
-                    if m.i == max(embed):
-                        return torch.unbind(torch.cat(embeddings, 1), dim=0)
-        return x, [f.permute(0, 2, 3, 1) for f in y[13]]  # return output
-    
     @staticmethod
     def _descale_pred(p, flips, scale, img_size, dim=1):
         """De-scale predictions following augmented inference (inverse operation)."""

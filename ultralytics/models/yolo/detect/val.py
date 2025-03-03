@@ -454,6 +454,7 @@ class DetectionValidator(BaseValidator):
         if file_name_mapping_id:
             return file_name_mapping_id.get(im_file, 0)
         assert False, f"error in function from_coco_get_image_id, {im_file} is not in {self.data['eval_ann_json']}"
+
             
     def pred_to_json(self, predn, filename):
         """Serialize YOLO predictions to COCO json format."""
