@@ -6,8 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import gc
-from ultralytics.nn.modules.memory_buffer import StreamBuffer_onnx 
-from ultralytics.data import build_dataloader, build_yolo_dataset, converter, build_video_dataloader
+from ultralytics.data import build_dataloader, build_yolo_dataset, converter, build_video_dataloader, build_stream_dataloader, build_yoloft_val_dataset
 from ultralytics.engine.validator import BaseValidator
 from ultralytics.utils import LOGGER, ops
 from ultralytics.utils.checks import check_requirements
@@ -156,45 +155,43 @@ class DetectionValidator(BaseValidator):
         self.init_metrics(de_parallel(model))
         self.jdict = []  # empty before each val
         
-        for batch_i, batch_videos in enumerate(bar):
+        save_fmaps = [None, None, None]
+        current_video_name = ''
+        for batch_i, batch in enumerate(bar):
             self.run_callbacks("on_val_batch_start")
             self.batch_i = batch_i
-            save_fmaps = [None, None, None]
+            assert len(batch["img_metas"]) == 1, "YOLOFT val must batch size = 1"
+            if current_video_name != batch["img_metas"][0]["video_name"]:
+                save_fmaps = [None, None, None]
+                current_video_name = batch["img_metas"][0]["video_name"]
             # print(f"batch_videos: {len(batch_videos)}")
-            # if batch_i>=1:
-            #     break
-            for frame_number, batch in enumerate(batch_videos):
-                # if frame_number>100:
-                #     break
-                # Preprocess
-                with dt[0]:
-                    batch = self.preprocess(batch)
-                        
-                # Inference
-                with dt[1]:
-                    preds, save_fmaps = model((batch["img"], save_fmaps), augment=augment)
+            with dt[0]:
+                batch = self.preprocess(batch)
+                    
+            # Inference
+            with dt[1]:
+                preds, save_fmaps = model((batch["img"], save_fmaps), augment=augment)
 
-                # Loss
-                with dt[2]:
-                    if self.training:
-                        self.loss += model.loss(batch, (preds, save_fmaps))[0][1]
-                        
-                # Postprocess
-                with dt[3]:
-                    preds = self.postprocess(preds)
+            # Loss
+            with dt[2]:
+                if self.training:
+                    self.loss += model.loss(batch, (preds, save_fmaps))[0][1]
+                    
+            # Postprocess
+            with dt[3]:
+                preds = self.postprocess(preds)
 
-                self.update_metrics(preds, batch)
-                if self.args.plots and (batch_i+1) + frame_number < 3:
-                    self.plot_val_samples(batch, (batch_i+1) + frame_number)
-                    self.plot_predictions(batch, preds, (batch_i+1) + frame_number)
+            self.update_metrics(preds, batch)
+            if self.args.plots and batch_i < 3:
+                self.plot_val_samples(batch, batch_i)
+                self.plot_predictions(batch, preds, batch_i)
 
-                self.run_callbacks("on_val_batch_end")
-                
-                if frame_number == len(batch_videos)//2:
-                    self._clear_memory()
-                
-            self._clear_memory()
+            self.run_callbacks("on_val_batch_end")
             
+            if (batch_i+1) % 400 == 0:
+                # print("clear memory")
+                self._clear_memory()
+                
         stats = self.get_stats()
         self.check_stats(stats)
         self.speed = dict(zip(self.speed.keys(), (x.t / len(self.dataloader.dataset) * 1e3 for x in dt)))
@@ -419,7 +416,7 @@ class DetectionValidator(BaseValidator):
             images_dir = None
             labels_dir = None
             
-        return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, stride=self.stride,
+        return build_yoloft_val_dataset(self.args, img_path, batch, self.data, mode=mode, stride=self.stride,
                                   images_dir=images_dir,
                                   labels_dir=labels_dir)
 
@@ -435,7 +432,7 @@ class DetectionValidator(BaseValidator):
         
         #add by guojiahao
         if datasampler == "streamSampler":
-            return build_video_dataloader(dataset, batch_size, self.args.workers, shuffle = False, rank=-1)  # return dataloader
+            return build_stream_dataloader(dataset, batch_size, self.args.workers, shuffle = False, rank=-1)  # return dataloader
         else:
             return build_dataloader(dataset, batch_size, self.args.workers, shuffle = False, rank=-1)  # normalSampler
 
