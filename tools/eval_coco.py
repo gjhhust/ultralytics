@@ -1,15 +1,25 @@
 from pycocotools.coco import COCO  # noqa
 # from pycocotools.cocoeval import COCOeval  # noqa
 from ultralytics.data.cocoeval_xs_vid import COCOeval  # noqa
-
+import os, json, pickle
 # anno_json = "/data/jiahaoguo/dataset/speed_merge/merge_test_1.json"
 # pred_json = "/data/jiahaoguo/YOLOFT/yoloft/train53/predictions.json"
 # anno_json = "/data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
 anno_json = "/data/jiahaoguo/dataset/XS-VIDv2/annotations/merge_V2V1/test.json"
-pred_json = "/data/jiahaoguo/ultralytics_yoloft/ultralytics/results/streamyolo-L_22.4.json"
+pred_json = "/data/jiahaoguo/ultralytics_yoloft/ultralytics/results/atss_r50_fpn_1x_XS-VIDv2_epoch_12.pkl"
 
 # 27.8 38.5 34.0 0.5 9.5 53.2 26.3 66.4 43.3
 # 8.9 13.8 9.2 1.0 11.0 19.3 3.2 27.5 27.6
+
+# 加载 pickle 文件
+if os.path.splitext(pred_json)[-1] == ".pkl":
+    with open(pred_json, 'rb') as f:
+        pred_data = pickle.load(f)
+
+    # 假设 pred_data 是一个符合 COCO 格式的列表，将其保存为 JSON 文件
+    pred_json = os.path.splitext(pred_json)[0] + ".json"
+    with open(pred_json, 'w') as f:
+        json.dump(pred_data, f)
 
 anno = COCO(str(anno_json))  # init annotations api
 pred = anno.loadRes(str(pred_json))  # init predictions api (must pass string, not Path)
