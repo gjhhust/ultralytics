@@ -418,7 +418,7 @@ class YOLOVideoDataset(BaseDataset_2):
         """Sets bbox loss and builds transformations."""
         # hyp.mosaic = 0.0
         self.transforms = self.build_transforms(hyp) 
-        LOGGER.info(f"now train dataset convert to split_length: {self.data['split_length'][index]}   mode: split_length")
+        LOGGER.info(f"[batch_size]: {self.batch_size}, now train dataset convert to split_length: {self.data['split_length'][index]}   mode: split_length")
         self.sub_videos, self.sampler_indices, self.index_mapping_frameinfo = self.split_sub_videos(self.interval, length=self.data["split_length"][index], 
                                                                         gpu_count = self.world_size, is_training = self.augment)
 

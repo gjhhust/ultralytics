@@ -1,0 +1,1 @@
+[{"img_id": 0, "batch_input_shape": [1024, 1024], "ori_shape": [1024, 1024], "scale_factor": [1.0, 1.0], "img_path": "/data5/zyxu/GaoDe_project/XS-VIDv2/images/DJI_0027-seg3_0/0000000.jpg", "img_shape": [1024, 1024], "pad_shape": [1024, 1024], "pred_instances": {"scores": 

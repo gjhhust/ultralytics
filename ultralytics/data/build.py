@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import dataloader, distributed
-
+from ultralytics.utils import LOGGER
 from ultralytics.data.dataset import GroundingDataset, YOLODataset, YOLOVideoDataset, YOLOMultiModalDataset, YOLOStreamDataset
 from ultralytics.data.loaders import (
     LOADERS,
@@ -173,7 +173,8 @@ class VideoSampler(Sampler):
         self.seed += 1  # Optionally increment the seed for the next epoch
         self.epoch += 1  # Increment the epoch
         self.set_epoch(self.epoch)  # Update the epoch in the distributed sampler
-        
+
+from torch.utils.data.sampler import BatchSampler
 class InfiniteDataLoader(dataloader.DataLoader):
     """
     Dataloader that reuses workers.
@@ -203,7 +204,6 @@ class InfiniteDataLoader(dataloader.DataLoader):
         This is useful when we want to modify settings of dataset while training.
         """
         self.iterator = self._get_iterator()
-
 
 class _RepeatSampler:
     """
@@ -237,12 +237,44 @@ def build_yolo_dataset(cfg, img_path, batch, data, mode="train", rect=False, str
     datasetname = data.get('datasetname', 'YOLODataset')
     if datasetname == "YOLODataset":
         dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
-    elif datasetname == "YOLOVideoDataset":
-        dataset = YOLOVideoDataset
     elif datasetname == "YOLOStreamDataset":
         dataset = YOLOStreamDataset
+    elif datasetname == "YOLOVideoDataset":
+        dataset = YOLOVideoDataset
     else:
         dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
+        
+    return dataset(
+        img_path=img_path,
+        imgsz=cfg.imgsz,
+        batch_size=batch,
+        augment=mode == "train",  # augmentation
+        hyp=cfg,  # TODO: probably add a get_hyps_from_cfg function
+        rect=cfg.rect or rect,  # rectangular batches
+        cache=cfg.cache or None,
+        single_cls=cfg.single_cls or False,
+        stride=int(stride),
+        pad=0.0 if mode == "train" else 0.5,
+        prefix=colorstr(f"{mode}: "),
+        task=cfg.task,
+        classes=cfg.classes,
+        data=data,
+        fraction=cfg.fraction if mode == "train" else 1.0,
+        images_dir = images_dir,
+        labels_dir = labels_dir
+    )
+    
+    
+def build_yoloft_val_dataset(cfg, img_path, batch, data, mode="train", rect=False, stride=32, multi_modal=False,images_dir=None,
+                 labels_dir=None,):
+    """Build YOLO Dataset."""
+    # dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
+    datasetname = data.get('datasetname', 'YOLODataset')
+    if datasetname == "YOLODataset":
+        dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
+    else:
+        dataset = YOLOStreamDataset
+        LOGGER.info("YOLOFT Network val and test use YOLOStreamDataset")
         
     return dataset(
         img_path=img_path,
