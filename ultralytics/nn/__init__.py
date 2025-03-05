@@ -4,6 +4,8 @@ from .tasks import (
     BaseModel,
     ClassificationModel,
     DetectionModel,
+    VideoDetectionModel,
+    SegmentationVideoModel,
     SegmentationModel,
     attempt_load_one_weight,
     attempt_load_weights,

@@ -394,8 +394,6 @@ class DetectionModel(BaseModel):
         """Initialize the loss criterion for the DetectionModel."""
         return E2EDetectLoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
 
-from ultralytics.nn.modules.memory_buffer import StreamBuffer_onnx 
-
 class VideoDetectionModel(BaseModel):
     """YOLOv8 detection model."""
 
@@ -430,7 +428,7 @@ class VideoDetectionModel(BaseModel):
                 """Performs a forward pass through the model, handling different Detect subclass types accordingly."""
                 if self.end2end:
                     return self.forward(x)["one2many"]
-                return self.forward(x)[0]
+                return self.forward(x)[0][0] if isinstance(m, (Segment, Pose, OBB)) else self.forward(x)[0]
 
             m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(2, ch, s, s))])  # forward
             self.stride = m.stride
@@ -621,6 +619,19 @@ class VideoDetectionModel(BaseModel):
         """Initialize the loss criterion for the DetectionModel."""
         return E2EDetectLoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
 
+
+class SegmentationVideoModel(VideoDetectionModel):
+    """YOLOv8 segmentation model."""
+
+    def __init__(self, cfg="yolov8n-seg.yaml", ch=3, nc=None, verbose=True):
+        """Initialize YOLOv8 segmentation model with given config and parameters."""
+        super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
+
+    def init_criterion(self):
+        """Initialize the loss criterion for the SegmentationModel."""
+        return v8SegmentationLoss(self)
+    
+    
 class OBBModel(DetectionModel):
     """YOLOv8 Oriented Bounding Box (OBB) model."""
 
@@ -643,8 +654,7 @@ class SegmentationModel(DetectionModel):
     def init_criterion(self):
         """Initialize the loss criterion for the SegmentationModel."""
         return v8SegmentationLoss(self)
-
-
+    
 class PoseModel(DetectionModel):
     """YOLOv8 pose model."""
 
