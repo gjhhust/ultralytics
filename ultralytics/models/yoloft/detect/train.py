@@ -8,7 +8,7 @@ import os
 import numpy as np
 import torch.nn as nn
 import gc
-from ultralytics.data import build_dataloader, build_yolo_dataset, build_video_dataloader
+from ultralytics.data import build_dataloader, build_yolo_dataset, build_video_dataloader, build_stream_dataloader, build_yoloft_val_dataset
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.models import yoloft
 from ultralytics.nn.tasks import VideoDetectionModel
@@ -48,7 +48,7 @@ class DetectionTrainer(BaseTrainer):
         trainer.train()
         ```
     """
-
+    
     def build_dataset(self, img_path, mode="train", batch=None):
         """
         Build YOLO Dataset.
@@ -73,6 +73,11 @@ class DetectionTrainer(BaseTrainer):
         else:
             images_dir = None
             labels_dir = None
+        
+        if mode != "train":
+            return build_yoloft_val_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs,
+                                  images_dir=images_dir,
+                                  labels_dir=labels_dir)
             
         return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs,
                                   images_dir=images_dir,
@@ -97,8 +102,10 @@ class DetectionTrainer(BaseTrainer):
         
         #add by guojiahao
         datasampler = self.data.get('datasampler', None)
-        if datasampler == "streamSampler":
+        if datasampler == "streamSampler" and mode == "train":
             return build_video_dataloader(dataset, batch_size, workers, shuffle, rank)  # return dataloader
+        elif datasampler == "streamSampler" and mode != "train":
+            return build_stream_dataloader(dataset, batch_size, workers, shuffle, rank)  # return dataloader
         else:
             return build_dataloader(dataset, batch_size, workers, shuffle, rank)  # normalSampler
     
@@ -191,12 +198,15 @@ class DetectionTrainer(BaseTrainer):
                 self._close_dataloader_mosaic()
                 self.train_loader.reset()
             
-            for sp, slipt_spot in enumerate(self.args.train_slit):
-                if epoch == slipt_spot:
-                    LOGGER.info('start train video')
+            for sp, slipt_spot in enumerate(reversed(self.args.train_slit)):
+                index = len(self.args.train_slit) - 1 - sp
+                if epoch >= slipt_spot and self.data["split_length"][index] != self.train_loader.dataset.length:
                     if hasattr(self.train_loader.dataset, '_train_video'):
-                        self.train_loader.dataset._train_video(hyp=self.args, index = sp)
+                        if RANK in {-1, 0}:
+                            LOGGER.info('start train video\n')
+                        self.train_loader.dataset._train_video(hyp=self.args, index = index)
                     self.train_loader.reset()   
+                    break
                     
             # At the beginning of the epoch loop, check if the dataset has a length attribute
             if hasattr(self.train_loader.dataset, 'length'):
@@ -213,7 +223,7 @@ class DetectionTrainer(BaseTrainer):
             # torch.autograd.set_detect_anomaly(True)
             for i, batch_videos in pbar:
                 self.run_callbacks("on_train_batch_start")
-                # if i > 5:
+                # if i > 70:
                 #     break
                 # Warmup
                 ni = i + nb * epoch
