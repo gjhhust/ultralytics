@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ultralytics.engine.model import Model
 from ultralytics.models import yoloft
-from ultralytics.nn.tasks import  VideoDetectionModel
+from ultralytics.nn.tasks import  VideoDetectionModel, SegmentationVideoModel
 from ultralytics.utils import ROOT, yaml_load
 
 
@@ -25,5 +25,11 @@ class YOLOFT(Model):
                 "trainer": yoloft.detect.DetectionTrainer,
                 "validator": yoloft.detect.DetectionValidator,
                 "predictor": yoloft.detect.DetectionPredictor,
-            }
+            },
+            "segment": {
+                "model": SegmentationVideoModel,
+                "trainer": yoloft.segment.SegmentationTrainer,
+                "validator": yoloft.segment.SegmentationValidator,
+                "predictor": yoloft.segment.SegmentationPredictor,
+            },
         }
