@@ -8,12 +8,12 @@ import os
 import numpy as np
 import torch.nn as nn
 import gc
-from ultralytics.data import build_dataloader, build_yolo_dataset, build_video_dataloader, build_stream_dataloader, build_yoloft_val_dataset
+from ultralytics.data import build_dataloader, build_yoloft_dataset, build_video_dataloader, build_stream_dataloader, build_yoloft_val_dataset
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.models import yoloft
 from ultralytics.nn.tasks import VideoDetectionModel
 from ultralytics.nn.modules.memory_buffer import StreamBuffer_onnx 
-from ultralytics.utils import LOGGER, RANK
+from ultralytics.utils import LOGGER, RANK, LOCAL_RANK
 from ultralytics.utils.plotting import plot_images, plot_labels, plot_results, plot_video
 from ultralytics.utils.torch_utils import de_parallel, torch_distributed_zero_first
 from ultralytics.nn.modules import MSTF_STREAM, MSTF_STREAM_cbam
@@ -79,11 +79,11 @@ class DetectionTrainer(BaseTrainer):
                                   images_dir=images_dir,
                                   labels_dir=labels_dir)
             
-        return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs,
+        return build_yoloft_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs,
                                   images_dir=images_dir,
                                   labels_dir=labels_dir)
 
-    def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train"):
+    def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train", just_dataloader = False):
         """Construct and return dataloader."""
         assert mode in {"train", "val"}, f"Mode must be 'train' or 'val', not {mode}."
         
@@ -92,8 +92,12 @@ class DetectionTrainer(BaseTrainer):
             batch_size = 1
             LOGGER.info(f"test dataloader using streamSampler and batch_size=1...")
             
-        with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
-            dataset = self.build_dataset(dataset_path, mode, batch_size)
+        if not just_dataloader:
+            with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
+                dataset = self.build_dataset(dataset_path, mode, batch_size)
+        else:
+            dataset = dataset_path
+        
         shuffle = mode == "train"
         if getattr(dataset, "rect", False) and shuffle:
             LOGGER.warning("WARNING ⚠️ 'rect=True' is incompatible with DataLoader shuffle, setting shuffle=False")
@@ -142,7 +146,21 @@ class DetectionTrainer(BaseTrainer):
         for i, frame in enumerate(batch_video):
             batch_video[i] = self.preprocess_batch(frame)
         return batch_video
-            
+    
+    def now_length(self, epoch):
+        split_index = 0
+        for i in range(len(self.args.train_slit) - 1):
+            if self.args.train_slit[i] <= epoch < self.args.train_slit[i + 1]:
+                split_index = i
+                break
+        else:
+            # 如果当前 epoch 大于等于最后一个分割点
+            split_index = len(self.args.train_slit) - 1
+
+        # 获取待设置的数据集长度
+        target_length = self.data["split_length"][split_index]
+        return target_length, int(self.data["split_batch_dict"][target_length])
+    
     def _do_train(self, world_size=1):
         """Train completed, evaluate and plot if specified by arguments."""
         if world_size > 1:
@@ -181,7 +199,8 @@ class DetectionTrainer(BaseTrainer):
         self.save_fmaps = None
         if isinstance(self.args.train_slit, int):
             self.args.train_slit = [self.args.train_slit]
-            
+        
+        assert len(self.args.train_slit) == len(self.data["split_length"]), "must equter"
         while True:
             self.epoch = epoch
             self.run_callbacks("on_train_epoch_start")
@@ -190,24 +209,31 @@ class DetectionTrainer(BaseTrainer):
                 self.scheduler.step()
 
             self.model.train()
+            target_length, target_batch_size = self.now_length(epoch)
+            # 检查当前数据集长度是否和待设置的一样
+            if self.train_loader.dataset.length != target_length:
+                if hasattr(self.train_loader.dataset, '_train_video'):
+                    if RANK in {-1, 0}:
+                        LOGGER.info('start train video\n')
+                    self.batch_size = target_batch_size * max(world_size, 1)
+                    dataset = self.train_loader.dataset
+                    self.train_loader = self.get_dataloader(dataset, batch_size=target_batch_size, rank=LOCAL_RANK, mode="train", just_dataloader=True)
+                    self.train_loader.dataset._train_video(hyp=self.args, length=target_length)
+                # 重置训练加载器
+                self.train_loader.reset()
+            
+            # 这里添加你的训练代码
+            print(f"Training epoch {epoch} with dataset length {self.train_loader.dataset.length} and batch size: {self.train_loader.batch_size}")
+                                
             if RANK != -1:
                 self.train_loader.sampler.set_epoch(epoch)
+                
             pbar = enumerate(self.train_loader)
             # Update dataloader attributes (optional)
             if epoch == (self.epochs - self.args.close_mosaic):
                 self._close_dataloader_mosaic()
                 self.train_loader.reset()
-            
-            for sp, slipt_spot in enumerate(reversed(self.args.train_slit)):
-                index = len(self.args.train_slit) - 1 - sp
-                if epoch >= slipt_spot and self.data["split_length"][index] != self.train_loader.dataset.length:
-                    if hasattr(self.train_loader.dataset, '_train_video'):
-                        if RANK in {-1, 0}:
-                            LOGGER.info('start train video\n')
-                        self.train_loader.dataset._train_video(hyp=self.args, index = index)
-                    self.train_loader.reset()   
-                    break
-                    
+
             # At the beginning of the epoch loop, check if the dataset has a length attribute
             if hasattr(self.train_loader.dataset, 'length'):
                 self.loss_step = self.train_loader.dataset.length
@@ -223,8 +249,9 @@ class DetectionTrainer(BaseTrainer):
             # torch.autograd.set_detect_anomaly(True)
             for i, batch_videos in pbar:
                 self.run_callbacks("on_train_batch_start")
-                # if i > 70:
-                #     break
+                if i > 10:
+                    print(len(batch_videos[0]["img"]))
+                    break
                 # Warmup
                 ni = i + nb * epoch
                 if ni <= nw:

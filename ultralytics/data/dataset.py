@@ -299,9 +299,9 @@ class YOLOVideoDataset(BaseDataset_2):
             
         self.im_frame_matching(self.im_files)
         
-        self.length = -1
+        self.length = self.data["split_length"][-1] if len(self.data["split_length"]) > 1 else self.data["split_length"][0] + 1 #epoch 0保证正常初始化dataset
         self.epoch = 0
-        self.sub_videos, self.sampler_indices, self.index_mapping_frameinfo  = self.split_sub_videos(self.interval, self.data["split_length"][0], self.world_size, is_training = self.augment)
+        self.sub_videos, self.sampler_indices, self.index_mapping_frameinfo  = self.split_sub_videos(self.interval, self.length, self.world_size, is_training = self.augment)
     
     def im_frame_matching(self, im_files):
         # Create a dictionary that groups images by video name
@@ -414,12 +414,12 @@ class YOLOVideoDataset(BaseDataset_2):
         # sampler_indices的内容索引all_sub_videos的视频位置
         return all_sub_videos, sampler_indices, index_mapping_frameinfo
             
-    def _train_video(self, hyp, index):
+    def _train_video(self, hyp, length):
         """Sets bbox loss and builds transformations."""
         # hyp.mosaic = 0.0
         self.transforms = self.build_transforms(hyp) 
-        LOGGER.info(f"[batch_size]: {self.batch_size}, now train dataset convert to split_length: {self.data['split_length'][index]}   mode: split_length")
-        self.sub_videos, self.sampler_indices, self.index_mapping_frameinfo = self.split_sub_videos(self.interval, length=self.data["split_length"][index], 
+        LOGGER.info(f"[batch_size]: {self.batch_size}, now train dataset convert to split_length: {length}   mode: split_length")
+        self.sub_videos, self.sampler_indices, self.index_mapping_frameinfo = self.split_sub_videos(self.interval, length=length, 
                                                                         gpu_count = self.world_size, is_training = self.augment)
 
     def close_mosaic(self, hyp):
@@ -656,7 +656,7 @@ class YOLOVideoDataset(BaseDataset_2):
         LOGGER.info(f"First_frame_per_GPU (video_idx, frame_number):\n")
         for gpu_video in first_frame_per_GPU:
             for f in gpu_video:
-                LOGGER.info(f"{f}\n")
+                LOGGER.info(f"{f}")
                 
         assert any([f[0]["sub_frame_number"]==0 for f in first_frame_per_GPU]), "The first frame of each video should be in the same GPU"
 

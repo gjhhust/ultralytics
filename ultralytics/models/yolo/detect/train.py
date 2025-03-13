@@ -128,7 +128,7 @@ class DetectionTrainer(BaseTrainer):
             LOGGER.info("Closing dataloader mosaic")
             self.train_loader.dataset.close_mosaic(hyp=copy(self.args))
             self.save_sample_flag = False
-            
+    
     def _do_train(self, world_size=1):
         """Train completed, evaluate and plot if specified by arguments."""
         if world_size > 1:

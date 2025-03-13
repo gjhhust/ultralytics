@@ -57,9 +57,12 @@ from .block import (
     RepVGGDW,
     ResNetLayer,
     SCDown,
+    C2f_MDC,
+    C2f_DC,
     MSTF_STREAM,
     MSTF_STREAM_cbam,
     C2f_ODConv,
+    DySample,
 )
 from .conv import (
     CBAM,
@@ -77,7 +80,10 @@ from .conv import (
     SpatialAttention,
     List_Split,
     InputData,
+    ModulatedDeformConv,
+    DeformConv
 )
+from .deform_conv import ModulatedDeformConv2dPack_MLU, count_modulated_deform_conv2d_pack_mlu
 from .head import OBB, Classify, Detect, Pose, RTDETRDecoder, Segment, WorldDetect, v10Detect
 from .transformer import (
     AIFI,

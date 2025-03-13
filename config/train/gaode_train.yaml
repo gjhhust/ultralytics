@@ -4,8 +4,8 @@
 task: detect # (str) YOLO task, i.e. detect, segment, classify, pose, obb
 mode: train # (str) YOLO mode, i.e. train, val, predict, export, track, benchmark
 
-train_slit: [0, 20] #片段划分 epochs
-use_trend_loss_weight: True #是否使用趋势损失权重
+train_slit: [0,15,25] #片段划分 epochs
+use_trend_loss_weight: False #是否使用趋势损失权重
 
 # Train settings -------------------------------------------------------------------------------------------------------
 model: # (str, optional) path to model file, i.e. yolov8n.pt, yolov8n.yaml

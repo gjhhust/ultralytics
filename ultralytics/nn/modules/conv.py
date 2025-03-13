@@ -6,7 +6,9 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-
+# from mmcv.ops import ModulatedDeformConv2d, DeformConv2d
+# from mmcv.ops import ModulatedDeformConv2dPack_MLU
+from .deform_conv import ModulatedDeformConv2dPack_MLU
 __all__ = (
     "Conv",
     "Conv2",
@@ -53,6 +55,61 @@ class Conv(nn.Module):
         """Apply convolution and activation without batch normalization."""
         return self.act(self.conv(x))
 
+# class Conv_Deform(nn.Module):  # 类名修改，避免与原 Conv 类冲突
+#     default_act = nn.SiLU()  # 默认激活
+
+#     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
+#         super().__init__()
+#         self.conv = DeformConv2d(c1, c2, k, stride=s, padding=autopad(k, p, d), groups=g, dilation=d, bias=False) # 使用 DeformConv2d
+#         self.bn = nn.BatchNorm2d(c2)
+#         self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
+
+#     def forward(self, x):
+#         return self.act(self.bn(self.conv(x)))
+
+#     def forward_fuse(self, x):
+#         return self.act(self.conv(x))
+
+class DeformConv(nn.Module):
+    """Deformable convolution with args(ch_in, ch_out, kernel, stride, padding, groups, dilation, activation)."""
+
+    default_act = nn.SiLU()  # default activation
+
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
+        """Initialize DeformConv layer with given arguments including activation."""
+        super().__init__()
+        self.conv = _DeformConv2d(c1, c2, k, stride=s, padding=autopad(k, p, d), groups=g, dilation=d, bias=False)
+        self.bn = nn.BatchNorm2d(c2)
+        self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
+
+    def forward(self, x):
+        """Apply convolution, batch normalization and activation to input tensor."""
+        return self.act(self.bn(self.conv(x)))
+
+    def forward_fuse(self, x):
+        """Apply convolution and activation without batch normalization."""
+        return self.act(self.conv(x))
+
+class ModulatedDeformConv(nn.Module):
+    """Deformable convolution with args(ch_in, ch_out, kernel, stride, padding, groups, dilation, activation)."""
+
+    default_act = nn.SiLU()  # default activation
+
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
+        """Initialize DeformConv layer with given arguments including activation."""
+        super().__init__()
+        self.conv = ModulatedDeformConv2dPack_MLU(c1, c2, k, stride=s, padding=autopad(k, p, d), groups=g, dilation=d, bias=False)
+        self.bn = nn.BatchNorm2d(c2)
+        self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
+
+    def forward(self, x):
+        """Apply convolution, batch normalization and activation to input tensor."""
+        return self.act(self.bn(self.conv(x)))
+
+    def forward_fuse(self, x):
+        """Apply convolution and activation without batch normalization."""
+        return self.act(self.conv(x))
+    
 try:
     from ultralytics.nn.modules.ops_dcnv3.modules import DCNv3,DCNv3_pytorch
     print("using DCNv3")
