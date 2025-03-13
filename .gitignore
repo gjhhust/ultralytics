@@ -175,4 +175,5 @@ calibration_*.npy
 ./run/*
 ultralytics/data/datasets
 *.zip
-!pretrain/yolos/yoloftS_coco200e41.3.pt
+!pretrain/*/*.pt
+test.jpg
