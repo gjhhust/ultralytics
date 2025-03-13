@@ -17,6 +17,8 @@ from ultralytics.nn.modules import (
     C2PSA,
     C3,
     C2f_DCNV3,
+    C2f_MDC,
+    C2f_DC,
     C3TR,
     ELAN1,
     OBB,
@@ -67,6 +69,7 @@ from ultralytics.nn.modules import (
     InputData,
     MSTF_STREAM,
     MSTF_STREAM_cbam,
+    DySample,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1223,6 +1226,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C2,
             C2f,
             C2f_DCNV3,
+            C2f_MDC,
+            C2f_DC,
             C2f_ODConv,
             C3k2,
             RepNCSPELAN4,
@@ -1258,6 +1263,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 C2,
                 C2f,
                 C2f_DCNV3,
+                C2f_MDC,
+                C2f_DC,
                 C2f_ODConv,
                 C3k2,
                 C2fAttn,
@@ -1316,6 +1323,10 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         elif m in (MSTF_STREAM_cbam,MSTF_STREAM):
             c1 = [ch[f_] for f_ in f]
             c2 = c1[1:]
+            args.insert(0, c1)
+        elif m is DySample:
+            c1 = ch[f]
+            c2 = ch[f]
             args.insert(0, c1)
         else:
             c2 = ch[f]

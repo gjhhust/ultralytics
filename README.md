@@ -35,6 +35,9 @@ git clone https://github.com/gjhhust/YOLOFT
 cd YOLOFT
 pip install -r requirements.txt 
 pip install -e .
+pip install -U openmim
+mim install mmcv
+pip install mmcv-full
 
 cd ./ultralytics/nn/modules/ops_dcnv3
 python setup.py build install

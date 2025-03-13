@@ -3,8 +3,7 @@ from ultralytics.utils import LOGGER, ops, TQDM
 import os, json
 from pathlib import Path
 import torch
-import argparse
-import time
+from openvino.runtime import Core  # 导入 OpenVINO 核心库
 import cv2
 import onnxruntime as ort
 import numpy as np
@@ -171,18 +170,6 @@ def custom_collate(batch):
         transform_infos.append(transform_info)
     
     return np.stack(img_nps), file_names, frame_ids, transform_infos
-
-def preprocess(buffer, img_np, frame_id, save_fmaps, imagz = 896):
-        """Preprocesses batch of images for YOLO training."""
-        if save_fmaps is not None:
-            fmaps_old = buffer.update_memory(save_fmaps, [frame_id], img_np.shape)
-            batch = (img_np, fmaps_old)
-        else:
-            batch = (img_np, (np.zeros([1, imagz//4, imagz//4, 64], dtype=np.float32), 
-                                    np.zeros([1, imagz//8, imagz//8, 104], dtype=np.float32), 
-                                    np.zeros([1, imagz//16, imagz//16, 192], dtype=np.float32)))
-
-        return batch
     
 def postprocess(preds, conf=0.001, iou=0.7, single_cls=False, agnostic_nms=False, max_det=300):
     """Apply Non-maximum suppression to prediction outputs.
@@ -281,14 +268,73 @@ class CocoEvaluators:
         except Exception as e:
             LOGGER.warning(f"{pkg} unable to run: {e}")
 
-    def save_json(self, save_dir):
-        save_dir = Path(save_dir)
-        preds_json = save_dir / "predictions.json"
+    def save_json(self, preds_json):
+        # save_dir = Path(save_dir)
         with open(preds_json, "w") as f:
             LOGGER.info(f"Saving {f.name}...")
             json.dump(self.jdict, f)  # flatten and save
         self.eval_json(preds_json)  # update stats
-            
+        
+def calculate_roi(boxes, img_shape, expand_ratio=0.2):
+    """计算 ROI 区域并进行适当扩大"""
+    if len(boxes) == 0:
+        return None
+    x1 = int(max(0, min(boxes[:, 0]) - expand_ratio * (max(boxes[:, 2]) - min(boxes[:, 0]))))
+    y1 = int(max(0, min(boxes[:, 1]) - expand_ratio * (max(boxes[:, 3]) - min(boxes[:, 1]))))
+    x2 = int(min(img_shape[2], max(boxes[:, 2]) + expand_ratio * (max(boxes[:, 2]) - min(boxes[:, 0]))))
+    y2 = int(min(img_shape[3], max(boxes[:, 3]) + expand_ratio * (max(boxes[:, 3]) - min(boxes[:, 1]))))
+    return (x1, y1, x2, y2)
+
+def sliding_average_boxes(boxes, history_boxes, window_size):
+    """对检测框进行滑动平均计算"""
+    history_boxes.append(boxes)
+    if len(history_boxes) > window_size:
+        history_boxes.pop(0)
+    all_boxes = np.concatenate(history_boxes, axis=0)
+    avg_boxes = np.mean(all_boxes, axis=0, keepdims=True)
+    return avg_boxes
+
+
+def load_onnx_model(onnx_model_path, device='cpu', gpu_id=0, cpu_threads=4):
+    """
+    加载ONNX模型并返回推理会话。
+
+    :param onnx_model_path: ONNX模型的路径
+    :param device: 设备类型，'cpu' 或 'gpu'
+    :param gpu_id: GPU设备编号
+    :param cpu_threads: CPU线程数
+    :return: ONNX推理会话
+    """
+    session_options = ort.SessionOptions()
+    if device == 'gpu':
+        # providers = [('CUDAExecutionProvider', {'device_id': gpu_id})]
+        providers = ['CUDAExecutionProvider']
+    elif device == 'cpu':
+        providers = ['CPUExecutionProvider']
+        session_options.intra_op_num_threads = cpu_threads
+        session_options.inter_op_num_threads = cpu_threads
+    else:
+        raise ValueError("Invalid device type. Choose either 'cpu' or 'gpu'.")
+
+    session = ort.InferenceSession(onnx_model_path, providers=['CUDAExecutionProvider'])
+    
+    # import onnxruntime as ort
+ 
+    # import onnxruntime as ort
+ 
+    # 创建一个推理会话
+    # session = ort.InferenceSession(r"YOLO_t22_best.onnx", providers=['CUDAExecutionProvider'])
+    
+    # 检查是否使用了CUDA
+    providers = session.get_providers()
+    print(f"Available providers: {providers}")
+    
+    # 获取当前执行程序的是否使用GPU设备
+    device = ort.get_device()
+    print(f"Current device: {device}")
+
+    return session
+
 def run_model(session, input, augment=False):
     # 获取输入输出的名称
     input_names = [input.name for input in session.get_inputs()]
@@ -313,65 +359,109 @@ def run_model(session, input, augment=False):
     
     return (pred, (fmap2, fmap1, fmap0))
 
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--onnx_model_path", type=str, default="runs/save/train227_yoloft_dydcn_newdata/weights/best.onnx")
+parser.add_argument("--model_type", type=str, default='yoloft')
+parser.add_argument("--json_path", type=str, default='/data/jiahaoguo/datasets/gaode_6/annotations/task1_2videos.json')
+parser.add_argument("--images_dir", type=str, default="/data/jiahaoguo/datasets/gaode_6/images")
+parser.add_argument("--imagz", type=int, default=896)
+parser.add_argument("--pred_json", type=str, default="results.json")
+args = parser.parse_args()
 
-json_path = "/data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
-images_dir = "/data/jiahaoguo/datasets/gaode_6/images"
-onnx_model_path = "/data/shuzhengwang/project/ultralytics/runs/detect/train194/weights/epoch16.onnx"
-imagz = 896
+json_path = args.json_path
+images_dir = args.images_dir
+onnx_model_path = args.onnx_model_path
+imagz = args.imagz
 
+print("model_test: ", args.onnx_model_path)
+print("json_path: ", args.json_path)
+print("pred_json: ", args.pred_json)
 
 
 dataset = CocoVIDDataset(json_path, images_dir, imagz=imagz) # 加载数据集
 dataloader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=custom_collate)
 
-session = ort.InferenceSession(onnx_model_path)
-buffer = StreamBuffer_onnx() # 保存特征图缓冲区
-coco_evaluator = CocoEvaluators(eval_ann_json="/data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.json", 
+# 加载ONNX模型
+# session = load_onnx_model(onnx_model_path, device='gpu', gpu_id=0, cpu_threads=8)
+# 读取 ONNX 模型并编译为 OpenVINO 模型
+core = Core()
+model = core.read_model(model=onnx_model_path)
+compiled_model = core.compile_model(model=model, device_name="CPU")
+
+coco_evaluator = CocoEvaluators(eval_ann_json=args.json_path, 
                          class_map = [0,1],#将模型预测的分类映射为 index: value，这里相当于没有映射
                          nc=2)
 
 
-save_fmaps = None
+save_fmaps_orige = [np.zeros([1, imagz//4, imagz//4, 64], dtype=np.float32), 
+            np.zeros([1, imagz//8, imagz//8, 104], dtype=np.float32), 
+            np.zeros([1, imagz//16, imagz//16, 192], dtype=np.float32)]
 
 for i, batch in enumerate(TQDM(dataloader, total=len(dataloader))):
     img_np, file_names, frame_ids, transform_infos = batch
-    batch = preprocess(buffer, img_np, frame_ids[0], save_fmaps)
-    preds, save_fmaps = run_model(session, batch)
-    # save_fmaps = [np.transpose(f, (0, 3, 1, 2)) for f in save_fmaps]
-    preds = [pred.numpy() for pred in postprocess(torch.from_numpy(preds), conf=0.001)]  #val 0.001, pred 0.25
     
+    if frame_ids[0] == 0:
+        save_fmaps = [b.copy() for b in save_fmaps_orige]
+        
+    # 获取模型的输入层
+    input_layer = next(iter(compiled_model.inputs))
+
+    if args.model_type == "yoloft":
+        # 构造输入字典
+        inputs = {
+            input_layer.any_name: img_np,  # 对应图像输入
+            "fmap2": save_fmaps[0],  
+            "fmap1": save_fmaps[1],  
+            "fmap0": save_fmaps[2]   
+        }
+        # 进行推理
+        outputs = compiled_model(inputs)
+        pred = outputs[compiled_model.output(0)]
+        fmap2 = outputs[compiled_model.output(1)]
+        fmap1 = outputs[compiled_model.output(2)]
+        fmap0 = outputs[compiled_model.output(3)]
+
+        save_fmaps = [fmap2, fmap1, fmap0]
+        preds = (pred, save_fmaps)
+        
+    elif args.model_type == "yolo":
+        # 构造输入字典
+        inputs = {
+            input_layer.any_name: img_np,  # 对应图像输入
+        }
+        # 进行推理
+        outputs = compiled_model(inputs)
+        pred = outputs[compiled_model.output(0)]
+
+        preds = (pred, )
+    else:
+        AssertionError("model typr must in [yolo yoloft]")
+
+    # save_fmaps = [np.transpose(f, (0, 3, 1, 2)) for f in save_fmaps]
+    preds = [pred.numpy() for pred in postprocess(torch.from_numpy(preds[0]), conf=0.001)]  # val 0.001, pred 0.25
+
     for pred in preds:
         img_orige, (orig_w, orig_h), pred[:, :4] = dataset.get_original_image_and_bbox(img_np, transform_infos[0], pred[:, :4])
     coco_evaluator.update_metrics(preds, file_names)
 
-coco_evaluator.save_json(os.path.dirname(onnx_model_path))
+coco_evaluator.save_json(args.pred_json)
 
 
-# 随机生成示例输入数据，替换为实际数据
-# img = np.random.randn(1, 3, 896, 896).astype(np.float32)  # 输入图像
-# fmap2 = np.random.randn(1, 224, 224, 64).astype(np.float32)  # 特征图2
-# fmap1 = np.random.randn(1, 112, 112, 104).astype(np.float32)  # 特征图1
-# fmap0 = np.random.randn(1, 56, 56, 192).astype(np.float32)  # 特征图0
+#####################session 推理###############################
+# save_fmaps = None
 
-# input_names = [input.name for input in session.get_inputs()]
-# output_names = [output.name for output in session.get_outputs()]
-# # 构造输入字典
-# inputs = {
-#     input_names[0]: img,  # 对应图像输入
-#     input_names[1]: fmap2,  # 对应fmap2
-#     input_names[2]: fmap1,  # 对应fmap1
-#     input_names[3]: fmap0   # 对应fmap0
-# }
+# for i, batch in enumerate(TQDM(dataloader, total=len(dataloader))):
+#     img_np, file_names, frame_ids, transform_infos = batch
+#     batch = preprocess(buffer, img_np, frame_ids[0], save_fmaps)
+#     preds, save_fmaps = run_model(session, batch)
+#     # save_fmaps = [np.transpose(f, (0, 3, 1, 2)) for f in save_fmaps]
+#     preds = [pred.numpy() for pred in postprocess(torch.from_numpy(preds), conf=0.001)]  #val 0.001, pred 0.25
+    
+#     for pred in preds:
+#         img_orige, (orig_w, orig_h), pred[:, :4] = dataset.get_original_image_and_bbox(img_np, transform_infos[0], pred[:, :4])
+#     coco_evaluator.update_metrics(preds, file_names)
 
-# outputs = session.run(output_names, inputs)
-# # for i in outputs:
-# #     print(i.shape)
-# # (1, 6, 66640)
-# # (1, 64, 224, 224)
-# # (1, 104, 112, 112)
-# # (1, 192, 56, 56)
+# coco_evaluator.save_json(os.path.dirname(onnx_model_path))
 
-# # 输出结果
-# print("Predictions:", outputs[0])  # 预测结果
-# print("Feature Maps:", outputs[1])  # 特征图
 

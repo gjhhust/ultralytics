@@ -17,6 +17,7 @@ from ultralytics.data.loaders import (
     LoadScreenshots,
     LoadStreams,
     LoadTensor,
+    LoadTensorBuffer,
     SourceTypes,
     autocast_list,
 )
@@ -237,7 +238,42 @@ def build_yolo_dataset(cfg, img_path, batch, data, mode="train", rect=False, str
     datasetname = data.get('datasetname', 'YOLODataset')
     if datasetname == "YOLODataset":
         dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
-    elif datasetname == "YOLOStreamDataset":
+    elif datasetname in ("YOLOStreamDataset",  "YOLOVideoDataset"):
+        dataset = YOLOStreamDataset
+    # elif datasetname == "YOLOVideoDataset":
+    #     dataset = YOLOVideoDataset
+    else:
+        dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
+        
+    return dataset(
+        img_path=img_path,
+        imgsz=cfg.imgsz,
+        batch_size=batch,
+        augment=mode == "train",  # augmentation
+        hyp=cfg,  # TODO: probably add a get_hyps_from_cfg function
+        rect=cfg.rect or rect,  # rectangular batches
+        cache=cfg.cache or None,
+        single_cls=cfg.single_cls or False,
+        stride=int(stride),
+        pad=0.0 if mode == "train" else 0.5,
+        prefix=colorstr(f"{mode}: "),
+        task=cfg.task,
+        classes=cfg.classes,
+        data=data,
+        fraction=cfg.fraction if mode == "train" else 1.0,
+        images_dir = images_dir,
+        labels_dir = labels_dir
+    )
+    
+
+def build_yoloft_dataset(cfg, img_path, batch, data, mode="train", rect=False, stride=32, multi_modal=False,images_dir=None,
+                 labels_dir=None,):
+    """Build YOLO Dataset."""
+    # dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
+    datasetname = data.get('datasetname', 'YOLODataset')
+    if datasetname == "YOLODataset":
+        dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
+    elif datasetname in ("YOLOStreamDataset"):
         dataset = YOLOStreamDataset
     elif datasetname == "YOLOVideoDataset":
         dataset = YOLOVideoDataset
@@ -263,7 +299,6 @@ def build_yolo_dataset(cfg, img_path, batch, data, mode="train", rect=False, str
         images_dir = images_dir,
         labels_dir = labels_dir
     )
-    
     
 def build_yoloft_val_dataset(cfg, img_path, batch, data, mode="train", rect=False, stride=32, multi_modal=False,images_dir=None,
                  labels_dir=None,):
@@ -379,7 +414,7 @@ def build_stream_dataloader(dataset, batch, workers, shuffle=True, rank=-1):
     
 def check_source(source):
     """Check source type and return corresponding flag values."""
-    webcam, screenshot, from_img, in_memory, tensor = False, False, False, False, False
+    webcam, screenshot, from_img, in_memory, tensor, buffer = False, False, False, False, False, False
     if isinstance(source, (str, int, Path)):  # int for local usb camera
         source = str(source)
         is_file = Path(source).suffix[1:] in (IMG_FORMATS | VID_FORMATS)
@@ -391,8 +426,15 @@ def check_source(source):
     elif isinstance(source, LOADERS):
         in_memory = True
     elif isinstance(source, (list, tuple)):
-        source = autocast_list(source)  # convert all list elements to PIL or np arrays
-        from_img = True
+        if len(source)==2 and len(source[-1]) == 3:
+            if isinstance(source[0], torch.Tensor):
+                tensor = True
+            else:
+                from_img = True
+            buffer = True
+        else:
+            source = autocast_list(source)  # convert all list elements to PIL or np arrays
+            from_img = True
     elif isinstance(source, (Image.Image, np.ndarray)):
         from_img = True
     elif isinstance(source, torch.Tensor):
@@ -400,7 +442,7 @@ def check_source(source):
     else:
         raise TypeError("Unsupported image type. For supported types see https://docs.ultralytics.com/modes/predict")
 
-    return source, webcam, screenshot, from_img, in_memory, tensor
+    return source, webcam, screenshot, from_img, in_memory, tensor, buffer
 
 
 def load_inference_source(source=None, batch=1, vid_stride=1, buffer=False):
@@ -416,11 +458,13 @@ def load_inference_source(source=None, batch=1, vid_stride=1, buffer=False):
     Returns:
         dataset (Dataset): A dataset object for the specified input source.
     """
-    source, stream, screenshot, from_img, in_memory, tensor = check_source(source)
-    source_type = source.source_type if in_memory else SourceTypes(stream, screenshot, from_img, tensor)
+    source, stream, screenshot, from_img, in_memory, tensor, buffer = check_source(source)
+    source_type = source.source_type if in_memory else SourceTypes(stream, screenshot, from_img, tensor, buffer)
 
     # Dataloader
-    if tensor:
+    if tensor and buffer:
+        dataset = LoadTensorBuffer(source[0], source[1])
+    elif tensor:
         dataset = LoadTensor(source)
     elif in_memory:
         dataset = source
@@ -428,6 +472,9 @@ def load_inference_source(source=None, batch=1, vid_stride=1, buffer=False):
         dataset = LoadStreams(source, vid_stride=vid_stride, buffer=buffer)
     elif screenshot:
         dataset = LoadScreenshots(source)
+    elif from_img and buffer:
+        # dataset = LoadPilAndNumpy(source)
+        AttributeError("error, img buffer have not achieve")
     elif from_img:
         dataset = LoadPilAndNumpy(source)
     else:
