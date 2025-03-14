@@ -42,9 +42,9 @@ def compare_pytorch_torchscript_outputs(torchscript_model_path, pytorch_model_pa
     input_image_torch = torch.tensor(input_image_np)
 
     if model_type == "yoloft":
-        fmap2_np = np.zeros((1, 224, 224, 64), dtype=np.float32)
-        fmap1_np = np.zeros((1, 112, 112, 104), dtype=np.float32)
-        fmap0_np = np.zeros((1, 56, 56, 192), dtype=np.float32)
+        fmap2_np = np.random.rand(1, 224, 224, 64).astype(np.float32)
+        fmap1_np = np.random.rand(1, 112, 112, 104).astype(np.float32)
+        fmap0_np = np.random.rand(1, 56, 56, 192).astype(np.float32)
         fmaps_np = [fmap2_np, fmap1_np, fmap0_np]
 
         fmap2_torch = torch.tensor(fmap2_np)
@@ -116,7 +116,7 @@ def compare_pytorch_torchscript_outputs(torchscript_model_path, pytorch_model_pa
         np.savez('torchscript_output.npz', torchscript_pred_output.cpu().numpy())
 
     # 6. 误差比较
-    rtol_threshold = 1e-3
+    rtol_threshold = 1e-5
     atol_threshold = 1e-5
 
     try:

@@ -84,75 +84,62 @@ class _DeformConv2d(nn.Module):
         x = self.deformconv(x, offset)
         return x
     
-# class _ModulatedDeformConv(nn.Module):
-#     def __init__(
-#         self,
-#         in_channels,
-#         out_channels,
-#         kernel_size,
-#         stride=1,
-#         padding=0,
-#         dilation=1,
-#         groups=1,
-#         deformable_groups=1,
-#         bias=True,
-#     ):
-#         """
-#         Modulated deformable convolution from :paper:`deformconv2`.
+import torchvision
+from mmengine.utils import digit_version
+from torchvision.ops import deform_conv2d as tv_deform_conv2d
 
-#         Arguments are similar to :class:`Conv2D`. Extra arguments:
+class DeformConv2dPack_MLU(DeformConv2d):
+    """This class is the DCN implementation of the MLU device. The MLU
+    backend support of the operator has been implemented in torchvision.
+    The mmcv registration mechanism is used for multiplexing here. The
+    torchvision implementation of DCN is called.
+    Args:
+        in_channels (int): Same as nn.Conv2d.
+        out_channels (int): Same as nn.Conv2d.
+        kernel_size (int or tuple[int]): Same as nn.Conv2d.
+        stride (int): Same as nn.Conv2d, while tuple is not supported.
+        padding (int): Same as nn.Conv2d, while tuple is not supported.
+        dilation (int): Same as nn.Conv2d, while tuple is not supported.
+        groups (int): Same as nn.Conv2d.
+        bias (bool or str): If specified as `auto`, it will be decided by
+            the norm_cfg. Bias will be set as True if norm_cfg is None,
+            otherwise False.
+        im2col_step (int): Number of samples processed by
+            im2col_cuda_kernel per call. It will work when ``batch_size``
+            > ``im2col_step``, but ``batch_size`` must be divisible by
+            ``im2col_step``. Default: 32. `New in version 1.7.2.
+            Currently not supported on MLU devices.`
+    """
 
-#         Args:
-#             deformable_groups (int): number of groups used in deformable convolution.
-#             norm (nn.Module, optional): a normalization layer
-#             activation (callable(Tensor) -> Tensor): a callable activation function
-#         """
-#         super(_ModulatedDeformConv, self).__init__()
-#         self.in_channels = in_channels
-#         self.out_channels = out_channels
-#         self.kernel_size = _pair(kernel_size)
-#         self.stride = _pair(stride)
-#         self.padding = _pair(padding)
-#         self.dilation = _pair(dilation)
-#         self.groups = groups
-#         self.deformable_groups = deformable_groups
-#         self.with_bias = bias
-        
-#         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=kernel_size, bias=bias) 
+    def __init__(self, *args, **kwargs):
+        assert digit_version(torchvision.__version__) >= digit_version(
+            '0.10.0a0'), 'the version of torchvision should be >= 0.10.0'
+        super().__init__(*args, **kwargs)
 
-#         self.p_conv = nn.Conv2d(in_channels, 2*kernel_size*kernel_size, kernel_size=3, padding=1, stride=stride)
-#         nn.init.constant_(self.p_conv.weight, 0) #权重初始化为0
-                
-#         self.m_conv = nn.Conv2d(in_channels, kernel_size*kernel_size, kernel_size=3, padding=1, stride=stride)
-#         nn.init.constant_(self.m_conv.weight, 0)
+        self.conv_offset = nn.Conv2d(
+            self.in_channels,
+            self.deform_groups * 2 * self.kernel_size[0] *
+            self.kernel_size[1],
+            kernel_size=self.kernel_size,
+            stride=_pair(self.stride),
+            padding=_pair(self.padding),
+            dilation=_pair(self.dilation),
+            bias=True)
+        self.reset_parameters()
 
+    def reset_parameters(self):
+        self.conv_offset.weight.data.zero_()
+        self.conv_offset.bias.data.zero_()
 
-#         self.deformconv = ModulatedDeformConv2d(
-#             in_channels,
-#             out_channels,
-#             kernel_size,
-#             stride=self.stride,
-#             padding=self.padding,
-#             dilation=self.dilation,
-#             groups=groups,
-#             deformable_groups=deformable_groups,
-#             bias=bias
-#         )
-
-#     def forward(self, x):
-#         # if x.numel() == 0:
-#         #     output_shape = [
-#         #         (i + 2 * p - (di * (k - 1) + 1)) // s + 1
-#         #         for i, p, di, k, s in zip(
-#         #             x.shape[-2:], self.padding, self.dilation, self.kernel_size, self.stride
-#         #         )
-#         #     ]
-#         #     output_shape = [x.shape[0], self.out_channels] + output_shape
-#         #     return _NewEmptyTensorOp.apply(x, output_shape)
-#         offset = self.p_conv(x) # (b,2N,h,w) 学习到的偏移量 2N表示在x轴方向的偏移和在y轴方向的偏移
-#         mask = torch.sigmoid(self.m_conv(x))  # (b,N,h,w) 学习到的N个调制标量
-#         x = self.deformconv(x, offset, mask)
-#         return x
+    def forward(self, x: Tensor) -> Tensor:  # type: ignore
+        cur_im2col_step = min(self.im2col_step, x.size(0))
+        assert (x.size(0) % cur_im2col_step
+                ) == 0, 'batch size must be divisible by im2col_step'
+        offset = self.conv_offset(x)
+        x = x.type_as(offset)
+        weight = self.weight.type_as(x)
+        return tv_deform_conv2d(x, offset, weight, None, self.stride,
+                                self.padding, self.dilation)
 
 import torchvision
 from mmengine.utils import digit_version
