@@ -1824,13 +1824,17 @@ class DySample(nn.Module):
             out_channels = 2 * groups * scale ** 2
 
         self.offset = nn.Conv2d(in_channels, out_channels, 1)
-        normal_init(self.offset, std=0.001)
+        
         if dyscope:
             self.scope = nn.Conv2d(in_channels, out_channels, 1, bias=False)
-            constant_init(self.scope, val=0.)
 
         self.register_buffer('init_pos', self._init_pos())
 
+    def reset_parameters(self):
+        normal_init(self.offset, std=0.001)
+        if hasattr(self, 'scope'):
+            constant_init(self.scope, val=0.)
+            
     def _init_pos(self):
         h = torch.arange((-self.scale + 1) / 2, (self.scale - 1) / 2 + 1) / self.scale
         return torch.stack(torch.meshgrid([h, h])).transpose(1, 2).repeat(1, self.groups, 1).reshape(1, -1, 1, 1)

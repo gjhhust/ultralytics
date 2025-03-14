@@ -6,7 +6,7 @@ model = YOLOFT("/data/shuzhengwang/project/ultralytics/yoloftS_all_MDC_dy_test.p
 
 # Export the model
 # model.export(format="onnx", imgsz=869, simplify=True)
-model.export(format="torchscript", imgsz=896) # imgsz 参数需要与你的模型输入尺寸匹配
+model.export(format="torchscript", imgsz=896, optimize=True) # imgsz 参数需要与你的模型输入尺寸匹配
 
 # import onnx
 # torch.jit.trace
