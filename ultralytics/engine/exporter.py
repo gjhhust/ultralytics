@@ -69,8 +69,8 @@ import numpy as np
 import torch
 
 from ultralytics.cfg import TASK2DATA, get_cfg
-from ultralytics.data import build_dataloader
-from ultralytics.data.dataset import YOLODataset
+from ultralytics.data import build_dataloader, build_stream_dataloader
+from ultralytics.data.dataset import YOLODataset, YOLOStreamDataset
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset
 from ultralytics.nn.autobackend import check_class_names, default_class_names
 from ultralytics.nn.modules import C2f, Classify, Detect, RTDETRDecoder
@@ -416,18 +416,36 @@ class Exporter:
         data = (check_cls_dataset if self.model.task == "classify" else check_det_dataset)(self.args.data)
         # TensorRT INT8 calibration should use 2x batch size
         batch = self.args.batch * (2 if self.args.format == "engine" else 1)
-        dataset = YOLODataset(
-            data[self.args.split or "val"],
-            data=data,
-            task=self.model.task,
-            imgsz=self.imgsz[0],
-            augment=False,
-            batch_size=batch,
-        )
-        n = len(dataset)
-        if n < 300:
-            LOGGER.warning(f"{prefix} WARNING ⚠️ >300 images recommended for INT8 calibration, found {n} images.")
-        return build_dataloader(dataset, batch=batch, workers=0)  # required for batch loading
+        
+        if isinstance(self.model, VideoDetectionModel):
+            images_dir = data["val_images_dir"]
+            labels_dir = data["val_labels_dir"]
+            dataset = YOLOStreamDataset(
+                data["val"],
+                images_dir=images_dir,
+                labels_dir=labels_dir,
+                data=data,
+                task=self.model.task,
+                imgsz=self.imgsz[0],
+                augment=False,
+                batch_size=batch,
+            )
+            if len(dataset) < 300:
+                LOGGER.warning(f"{prefix} WARNING ⚠️ >300 images recommended for INT8 calibration, found {n} images.")
+            return build_stream_dataloader(dataset, batch=batch, workers=0)
+        else:
+            dataset = YOLODataset(
+                data[self.args.split or "val"],
+                data=data,
+                task=self.model.task,
+                imgsz=self.imgsz[0],
+                augment=False,
+                batch_size=batch,
+            )
+            n = len(dataset)
+            if n < 300:
+                LOGGER.warning(f"{prefix} WARNING ⚠️ >300 images recommended for INT8 calibration, found {n} images.")
+            return build_dataloader(dataset, batch=batch, workers=0)  # required for batch loading
 
     @try_export
     def export_torchscript(self, prefix=colorstr("TorchScript:")):
@@ -533,15 +551,35 @@ class Exporter:
 
         LOGGER.info(f"\n{prefix} starting export with openvino {ov.__version__}...")
         assert TORCH_1_13, f"OpenVINO export requires torch>=1.13.0 but torch=={torch.__version__} is installed"
-        ov_model = ov.convert_model(
-            self.model,
-            input=None if self.args.dynamic else [self.im.shape],
-            example_input=self.im,
-        )
+        
+        if isinstance(self.model, VideoDetectionModel):
+            inputs = [
+                self.im.shape,      # 主图像输入
+                self.fmaps_old[0].shape,       # 特征图2
+                self.fmaps_old[1].shape,       # 特征图1
+                self.fmaps_old[2].shape       # 特征图0
+            ]
+            example_input =  (
+                self.im,    # 图像输入示例
+                self.fmaps_old[0],     # fmap2示例
+                self.fmaps_old[1],     # fmap1示例
+                self.fmaps_old[2]     # fmap0示例
+            )
+            ov_model = ov.convert_model(
+                self.model,
+                input = inputs,
+                example_input=example_input,
+            )
+        else:
+            ov_model = ov.convert_model(
+                self.model,
+                input=None if self.args.dynamic else [self.im.shape],
+                example_input=self.im,
+            )
 
         def serialize(ov_model, file):
             """Set RT info, serialize and save metadata YAML."""
-            ov_model.set_rt_info("YOLO", ["model_info", "model_type"])
+            ov_model.set_rt_info("YOLOFT", ["model_info", "model_type"])
             ov_model.set_rt_info(True, ["model_info", "reverse_input_channels"])
             ov_model.set_rt_info(114, ["model_info", "pad_value"])
             ov_model.set_rt_info([255.0], ["model_info", "scale_values"])
@@ -564,7 +602,10 @@ class Exporter:
                 data_item: torch.Tensor = data_item["img"] if isinstance(data_item, dict) else data_item
                 assert data_item.dtype == torch.uint8, "Input image must be uint8 for the quantization preprocessing"
                 im = data_item.numpy().astype(np.float32) / 255.0  # uint8 to fp16/32 and 0 - 255 to 0.0 - 1.0
-                return np.expand_dims(im, 0) if im.ndim == 3 else im
+                return (np.expand_dims(im, 0) if im.ndim == 3 else im,
+                        np.zeros([1, self.imgsz[0]//4, self.imgsz[0]//4, 64], dtype=np.float32), 
+                        np.zeros([1, self.imgsz[0]//8, self.imgsz[0]//8, 104], dtype=np.float32), 
+                        np.zeros([1, self.imgsz[0]//16, self.imgsz[0]//16, 192], dtype=np.float32))
 
             # Generate calibration data for integer quantization
             ignored_scope = None

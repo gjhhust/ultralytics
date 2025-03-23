@@ -1,6 +1,6 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
-import itertools
+import itertools,os
 
 from ultralytics.data import build_yolo_dataset
 from ultralytics.models import yolo
@@ -75,9 +75,23 @@ class WorldTrainer(yolo.detect.DetectionTrainer):
             batch (int, optional): Size of batches, this is for `rect`. Defaults to None.
         """
         gs = max(int(de_parallel(self.model).stride.max() if self.model else 0), 32)
-        return build_yolo_dataset(
-            self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs, multi_modal=mode == "train"
-        )
+        if "train_images_dir" in self.data and "train_labels_dir" in self.data:
+            if mode == "train":
+                images_dir = self.data["train_images_dir"]
+                labels_dir = self.data["train_labels_dir"]
+            elif mode == "val":
+                images_dir = self.data["val_images_dir"]
+                labels_dir = self.data["val_labels_dir"]
+            else:
+                images_dir = os.path.join(self.data["path"],self.data["images_dir"])
+                labels_dir = os.path.join(self.data["path"],self.data["labels_dir"])
+        else:
+            images_dir = None
+            labels_dir = None
+            
+        return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs,
+                                  images_dir=images_dir,
+                                  labels_dir=labels_dir)
 
     def preprocess_batch(self, batch):
         """Preprocesses a batch of images for YOLOWorld training, adjusting formatting and dimensions as needed."""
@@ -85,6 +99,7 @@ class WorldTrainer(yolo.detect.DetectionTrainer):
 
         # NOTE: add text features
         texts = list(itertools.chain(*batch["texts"]))
+        texts = [t[0] for t in texts]
         text_token = self.clip.tokenize(texts).to(batch["img"].device)
         txt_feats = self.text_model.encode_text(text_token).to(dtype=batch["img"].dtype)  # torch.float32
         txt_feats = txt_feats / txt_feats.norm(p=2, dim=-1, keepdim=True)

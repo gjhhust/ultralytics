@@ -92,7 +92,7 @@ class CenterFeatureScaleModule(nn.Module):
         return center_feature_scale
 
 
-class DCNv3_pytorch(nn.Module):
+class DCNv3_(nn.Module):
     def __init__(
             self,
             channels=64,
@@ -332,15 +332,26 @@ class DCNv3(nn.Module):
         
         if not self.use_dcn_v4_op:
             mask = F.softmax(mask, -1).reshape(N, H, W, -1).type(dtype)
-            x = DCNv3Function.apply(
-                x, offset, mask,
-                self.kernel_size, self.kernel_size,
-                self.stride, self.stride,
-                self.pad, self.pad,
-                self.dilation, self.dilation,
-                self.group, self.group_channels,
-                self.offset_scale,
-                256)
+            if not x.is_cuda:
+                x = dcnv3_core_pytorch(
+                    x, offset, mask,
+                    self.kernel_size, self.kernel_size,
+                    self.stride, self.stride,
+                    self.pad, self.pad,
+                    self.dilation, self.dilation,
+                    self.group, self.group_channels,
+                    self.offset_scale)
+                print("warning: now using DCNv3 pytroch version")
+            else:
+                x = DCNv3Function.apply(
+                    x, offset, mask,
+                    self.kernel_size, self.kernel_size,
+                    self.stride, self.stride,
+                    self.pad, self.pad,
+                    self.dilation, self.dilation,
+                    self.group, self.group_channels,
+                    self.offset_scale,
+                    256)
         else:
             # DCNv4 combines offset and weight mask into one tensor `offset_mask`.
             # The following code is to align DCNv3 and DCNv4
@@ -377,3 +388,5 @@ class DCNv3(nn.Module):
         x = self.output_proj(x)
 
         return x
+
+

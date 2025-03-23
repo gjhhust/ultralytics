@@ -1202,7 +1202,12 @@ class C2f_DCNV3(nn.Module):
         self.c = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, 2 * self.c, 1, 1)
         self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
-        self.m = nn.ModuleList(Bottleneck_DCNV3(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
+        self.m = nn.ModuleList([
+            Bottleneck(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) if i == 0 or i % 2 == 0
+            else Bottleneck_DCNV3(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0)
+            for i in range(n)
+        ])
+        # self.m = nn.ModuleList(Bottleneck_DCNV3(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
 
     def forward(self, x):
         """Forward pass through C2f layer."""
@@ -1372,11 +1377,13 @@ class MSTF_STREAM(nn.Module): #
         # self.plot = True
         fmaps_old = x[0]  
         fmaps_new = x[1:]  #3,B,C,H,W The incoming scale must be from large to small
+        
         if fmaps_old == [None, None, None]:
             fmaps_old = [torch.zeros_like(f, device=f.device, dtype=f.dtype) for f in fmaps_new]
         else:
             fmaps_old = [fmap.permute(0, 3, 1, 2) for fmap in fmaps_old]
-        
+            
+        return fmaps_new + fmaps_old
         [fmap2, fmap1, fmap0] = fmaps_old
         [rurrent_x2, rurrent_x1, rurrent_x0] = fmaps_new
 
@@ -1546,21 +1553,7 @@ class MSTF_STREAM_cbam(nn.Module): #
         
         return [pan_out2, pan_out1, pan_out0]
 
-class ADown(nn.Module):
-    def __init__(self, cx, cy, cout):
-        super().__init__()
-        self.c = cout // 2
-        self.cv1 = flow_conv(cx // 2, self.c, 3, 2, 1)
-        self.cv2 = flow_conv(cx // 2 + cy, self.c, 1, 1, 0)
-
-    def forward(self, x, y):
-        x = torch.nn.functional.avg_pool2d(x, 2, 1, 0, False, True)
-        x1, x2 = x.chunk(2, 1)
-        x1 = self.cv1(x1)
-        x2 = torch.nn.functional.max_pool2d(x2, 3, 2, 1)
-        x2 = self.cv2(torch.cat((x2, y), 1))
-        return torch.cat((x1, x2), 1)
-
+import math
 class FlowDown(nn.Module):
     def __init__(self, c_4, c_2, c ,cout):
         super().__init__()
@@ -1573,11 +1566,11 @@ class FlowDown(nn.Module):
         half_c_2_1 = c_2 // 2
         half_c_1 = c // 2
 
-        self.cv1 = flow_conv(half_c_4, self.c, 3, 2, 1)
-        self.cv2 = flow_conv(half_c_4+half_c_2, self.c, 3, 2, 1)
+        self.cv1 = Conv(half_c_4, self.c, 3, 2, 1)
+        self.cv2 = Conv(half_c_4+half_c_2, self.c, 3, 2, 1)
 
-        self.cv3 = flow_conv(self.c + half_c, self.c, 1, 1, 0)
-        self.cv4 = flow_conv(half_c_1 + half_c_4_1 + half_c_2_1, self.c, 1, 1, 0)
+        self.cv3 = Conv(self.c + half_c, self.c, 1, 1, 0)
+        self.cv4 = Conv(half_c_1 + half_c_4_1 + half_c_2_1, self.c, 1, 1, 0)
 
     def forward(self, f_4, f_2, f):
         f_4 = torch.nn.functional.avg_pool2d(f_4, 2, 1, 0, False, True)
@@ -1620,7 +1613,7 @@ class FlowUp(nn.Module):
         half_x = math.ceil(cx / 2)
         half_x_2 = cx // 2
         self.cv1 = ConvTranspose(half_x, self.c, 3, 2, 1, 1)
-        self.cv2 = flow_conv(half_x_2 + cy, self.c, 3, 1, 1)
+        self.cv2 = Conv(half_x_2 + cy, self.c, 3, 1, 1)
         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
 
     def forward(self, x, y):
@@ -1630,8 +1623,237 @@ class FlowUp(nn.Module):
         x2 = self.cv2(torch.cat((x2, y), 1))
         return torch.cat((x1, x2), 1)
 
+class FlowEncoder(nn.Module):
+    def __init__(self, gru, c, cout):
+        super().__init__()
+        self.gru = gru
+        self.mask = Conv(c, cout, 1)
+        self.offset = Conv(c, cout, 3)
 
-from ultralytics.nn.modules.flow import CorrBlock, AlternateCorrBlock, initialize_flow,SepConvGRU,  BasicUpdateBlock, SmallNetUpdateBlock,  NetUpdateBlock, SmallUpdateBlock, warp_feature, ConvGRU
+    def forward(self, x):
+        x = self.gru(x)
+        return  self.mask(x), self.offset(x)
+    
+import warnings
+try:
+    from ultralytics.nn.modules.ops_dcnv3.modules import DCNv3Function, dcnv3_core_pytorch, CenterFeatureScaleModule,build_norm_layer, build_act_layer
+    from torch.nn.init import xavier_uniform_, constant_
+    print("using DCNv3")
+except ImportError:
+    print("ERROR: No DCNv3")
+    
+def _is_power_of_2(n):
+    if (not isinstance(n, int)) or (n < 0):
+        raise ValueError(
+            "invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
+
+    return (n & (n - 1) == 0) and n != 0
+
+class FDCN(nn.Module):
+    default_act = nn.SiLU()  # default activation
+    def __init__(
+            self,
+            gru,
+            channels=64,
+            kernel_size=3,
+            dw_kernel_size=None,
+            stride=1,
+            pad=1,
+            dilation=1,
+            group=4,
+            offset_scale=1.0,
+            act_layer='GELU',
+            norm_layer='LN',
+            center_feature_scale=False,
+            act=True,
+            ):
+        """
+        DCNv3 Module
+        :param channels
+        :param kernel_size
+        :param stride
+        :param pad
+        :param dilation
+        :param group
+        :param offset_scale
+        :param act_layer
+        :param norm_layer
+        """
+        super().__init__()
+        if channels % group != 0:
+            raise ValueError(
+                f'channels must be divisible by group, but got {channels} and {group}')
+        _d_per_group = channels // group
+        dw_kernel_size = dw_kernel_size if dw_kernel_size is not None else kernel_size
+        # you'd better set _d_per_group to a power of 2 which is more efficient in our CUDA implementation
+        if not _is_power_of_2(_d_per_group):
+            warnings.warn(
+                "You'd better set channels in DCNv3 to make the dimension of each attention head a power of 2 "
+                "which is more efficient in our CUDA implementation.")
+
+        self.offset_scale = offset_scale
+        self.channels = channels
+        self.kernel_size = kernel_size
+        self.dw_kernel_size = dw_kernel_size
+        self.stride = stride
+        self.dilation = dilation
+        self.pad = pad
+        self.group = group
+        self.group_channels = channels // group
+        self.offset_scale = offset_scale
+        self.center_feature_scale = center_feature_scale
+        self.gru = gru
+
+        self.dw_conv = nn.Sequential(
+            nn.Conv2d(
+                channels,
+                channels,
+                kernel_size=dw_kernel_size,
+                stride=1,
+                padding=(dw_kernel_size - 1) // 2,
+                groups=channels),
+            build_norm_layer(
+                channels,
+                norm_layer,
+                'channels_first',
+                'channels_last'),
+            build_act_layer(act_layer))
+        self.offset = nn.Linear(
+            channels,
+            group * kernel_size * kernel_size * 2)
+        self.mask = nn.Linear(
+            channels,
+            group * kernel_size * kernel_size)
+        self.input_proj = nn.Linear(channels, channels)
+        self.output_proj = nn.Linear(channels, channels)
+        self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
+        self.reset_parameters()
+
+
+    def reset_parameters(self):
+        constant_(self.offset.weight.data, 0.)
+        constant_(self.offset.bias.data, 0.)
+        constant_(self.mask.weight.data, 0.)
+        constant_(self.mask.bias.data, 0.)
+        xavier_uniform_(self.input_proj.weight.data)
+        constant_(self.input_proj.bias.data, 0.)
+        xavier_uniform_(self.output_proj.weight.data)
+        constant_(self.output_proj.bias.data, 0.)
+
+    def forward(self, input_x, input_y):
+        """
+        :param input                       (N, C, H, W)
+        :param input_y                      (N, C, H, W)
+        :return output                     (N, C, H, W)
+        """
+        input_y = self.gru(input_y, input_x)
+        input = input_x.permute(0, 2, 3, 1) #(N, H, W, C)
+        
+        N, H, W, _ = input.shape
+
+        x = self.input_proj(input)
+        dtype = x.dtype
+
+        y = self.dw_conv(input_y)
+        offset = self.offset(y)
+        mask = self.mask(y).reshape(N, H, W, self.group, -1)
+        
+        mask = F.softmax(mask, -1).reshape(N, H, W, -1).type(dtype)
+        if not x.is_cuda:
+            x = dcnv3_core_pytorch(
+                x, offset, mask,
+                self.kernel_size, self.kernel_size,
+                self.stride, self.stride,
+                self.pad, self.pad,
+                self.dilation, self.dilation,
+                self.group, self.group_channels,
+                self.offset_scale)
+            print("warning: now using DCNv3 pytroch version")
+        else:
+            x = DCNv3Function.apply(
+                x, offset, mask,
+                self.kernel_size, self.kernel_size,
+                self.stride, self.stride,
+                self.pad, self.pad,
+                self.dilation, self.dilation,
+                self.group, self.group_channels,
+                self.offset_scale,
+                256)
+
+        x = self.output_proj(x)
+        return self.act(x.permute(0, 3, 1, 2)), input_y
+    
+class MSTFDC(nn.Module):
+    def __init__(
+            self,
+            in_channels,
+            ):
+        """
+        MSTF Module
+        """
+        super().__init__()
+        assert in_channels[0] == in_channels[1:], f"input last feature dims must equal to now feature dims, plase set InputData:[f{in_channels[1:]}]"
+        in_channels = in_channels[1:]
+        self.flows = nn.ModuleList([
+            FDCN(SepConvGRU(hidden_dim=ic, input_dim=ic), ic) if i == 0 else FDCN(ConvGRU(hidden_dim=ic, input_dim=ic), ic)
+            for i, ic in enumerate(in_channels)
+        ])
+        
+    def forward(self, x):
+        # self.plot = True
+        fmaps_old = x[0]  
+        fmaps_new = x[1:]  #3,B,C,H,W The incoming scale must be from large to small
+        if fmaps_old == [None, None, None]:
+            fmaps_old = [torch.zeros_like(f, device=f.device, dtype=f.dtype) for f in fmaps_new]
+        else:
+            fmaps_old = [fmap.permute(0, 3, 1, 2) for fmap in fmaps_old]
+        
+        fs = []
+        nets = []
+        for fn, fo, f_layer in zip(fmaps_new, fmaps_old, self.flows):
+            f, net = f_layer(fn, fo)
+            fs.append(f)
+            nets.append(net)
+        return fs+nets
+        # return fmaps_new+fmaps_old
+    
+class MSTFDC_T(nn.Module):
+    def __init__(
+            self,
+            in_channels,
+            ):
+        """
+        MSTF Module
+        """
+        super().__init__()
+        assert in_channels[0] == in_channels[1:], f"input last feature dims must equal to now feature dims, plase set InputData:[f{in_channels[1:]}]"
+        in_channels = in_channels[1:]
+        self.flows = nn.ModuleList([
+            nn.ModuleList(
+                [Conv(ic, ic//3, k=1),
+                ConvGRU(hidden_dim=ic, input_dim=ic//3)])
+            for i, ic in enumerate(in_channels)
+        ])
+        
+    def forward(self, x):
+        # self.plot = True
+        fmaps_old = x[0]  
+        fmaps_new = x[1:]  #3,B,C,H,W The incoming scale must be from large to small
+        if fmaps_old == [None, None, None]:
+            fmaps_old = [torch.zeros_like(f, device=f.device, dtype=f.dtype) for f in fmaps_new]
+        else:
+            fmaps_old = [fmap.permute(0, 3, 1, 2) for fmap in fmaps_old]
+        
+        fs = []
+        nets = []
+        for fn, fo, f_layer in zip(fmaps_new, fmaps_old, self.flows):
+            fn_ = f_layer[0](fn)
+            net = f_layer[1](fo, fn_) 
+            fs.append(net+fn)
+            nets.append(net)
+        return fs+nets
+    
+from ultralytics.nn.modules.flow import CorrBlock, AlternateCorrBlock, initialize_flow,SepConvGRU,  ConvGRU, BasicUpdateBlock, SmallNetUpdateBlock,  NetUpdateBlock, SmallUpdateBlock, warp_feature, ConvGRU
 
 class MSTF_FLOW(nn.Module): #
     def __init__(self, inchannle, hidden_dim=64, epoch_train=22, stride=[2,2,2], radius=[3,3,3], n_levels=3, iter_max=2, method = "method1", motion_flow = True, aux_loss = False):

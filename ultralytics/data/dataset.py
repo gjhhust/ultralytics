@@ -1244,6 +1244,7 @@ class YOLOStreamDataset(BaseDataset_2):
         else:
             segments = np.zeros((0, segment_resamples, 2), dtype=np.float32)
         label["instances"] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized)
+        label["texts"] = [v.split("/") for _, v in self.data["names"].items()]
         return label
     
     def get_image_and_label(self, index):

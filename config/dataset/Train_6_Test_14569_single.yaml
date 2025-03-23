@@ -21,12 +21,12 @@ test_images_dir: /data/jiahaoguo/datasets/gaode_6/images/
 split_length: [2] #先使用10的片段训练，再50 "all"表示不切割 #{2:12, 3:8, 4:6, 5:5, 6:4}
 
 split_batch_dict: 
-  2: 12
+  2: 16 #s1
   3: 8
   4: 6
   5: 5
   6: 4
-  8: 3
+  8: 7
 
 match_number: 1  #当前帧前后各取一共几个关连帧，match_number=2即前后各取一个
 interval: 2    # 取得帧间隔当前帧

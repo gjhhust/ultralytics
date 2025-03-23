@@ -111,7 +111,7 @@ class ModulatedDeformConv(nn.Module):
         return self.act(self.conv(x))
     
 try:
-    from ultralytics.nn.modules.ops_dcnv3.modules import DCNv3,DCNv3_pytorch
+    from ultralytics.nn.modules.ops_dcnv3.modules import DCNv3
     print("using DCNv3")
 except ImportError:
     print("ERROR: No DCNv3")
@@ -124,16 +124,13 @@ class DCNV3_conv(nn.Module):
         self.ouc = ouc
         self.bn = nn.BatchNorm2d(ouc)
         self.dcnv3 = DCNv3(ouc, kernel_size=k, stride=s, group=g, dilation=d, norm_layer="BN",act_layer="SiLU") # c++版本
-        # self.dcnv3 = DCNv3_pytorch(ouc, kernel_size=k, stride=s, group=g, dilation=d) # pytorch版本
+        # self.dcnv3 = DCNv3_pytorch(ouc, kernel_size=k, stride=s, group=g, dilation=d, norm_layer="BN",act_layer="SiLU") # pytorch版本
         self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
 
     def forward(self, x):
         x = self.conv(x)
         x = x.permute(0, 2, 3, 1)
-        if x.device.type == 'cpu':
-            x = x[:,...,:self.ouc]
-        else:
-            x = self.dcnv3(x)
+        x = self.dcnv3(x)
         
         x = x.permute(0, 3, 1, 2)
         x = self.act(self.bn(x))

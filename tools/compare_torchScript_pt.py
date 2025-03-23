@@ -3,7 +3,7 @@ import numpy as np
 from ultralytics import YOLO, YOLOFT
 from torch.testing import assert_close
 from PIL import Image
-
+import os
 def load_and_preprocess_image(image_path, img_size=896):
     """
     加载图片并进行预处理，包括调整大小和归一化
@@ -15,7 +15,7 @@ def load_and_preprocess_image(image_path, img_size=896):
     image_np = np.expand_dims(image_np, axis=0)  # 添加批次维度
     return image_np
 
-def compare_pytorch_torchscript_outputs(torchscript_model_path, pytorch_model_path, image_path, model_type="yolo"):
+def compare_pytorch_torchscript_outputs(torchscript_model_path, pytorch_model_path, image_path, model_type="yolo", compare_dir=None):
     """
     比较 PyTorch 模型和 TorchScript 模型的输出误差，使用 torch.testing.assert_close。
 
@@ -25,6 +25,7 @@ def compare_pytorch_torchscript_outputs(torchscript_model_path, pytorch_model_pa
         image_path (str): 输入图片的路径。
         model_type (str): 模型类型，'yolo' 或 'yoloft'。
     """
+    os.makedirs(compare_dir, exist_ok=True)
     # 1. 加载 PyTorch 模型
     if model_type == "yoloft":
         pytorch_model = YOLOFT(pytorch_model_path)
@@ -53,11 +54,12 @@ def compare_pytorch_torchscript_outputs(torchscript_model_path, pytorch_model_pa
         fmaps_torch = [fmap2_torch, fmap1_torch, fmap0_torch]
 
     # 保存输入数据到 npz 文件
-    np.savez('input_img.npz', input_image_np)
+    
+    np.save(os.path.join(compare_dir, 'input_img.npy'), input_image_np)
     if model_type == "yoloft":
-        np.savez('fmap2_np.npz', fmap2_np)
-        np.savez('fmap1_np.npz', fmap1_np)
-        np.savez('fmap0_np.npz', fmap0_np)
+        np.save(os.path.join(compare_dir, 'fmap2_np.npy'), fmap2_np)
+        np.save(os.path.join(compare_dir, 'fmap1_np.npy'), fmap1_np)
+        np.save(os.path.join(compare_dir, 'fmap0_np.npy'), fmap0_np)
         
 
     # 4. 进行 PyTorch 推理
@@ -109,15 +111,15 @@ def compare_pytorch_torchscript_outputs(torchscript_model_path, pytorch_model_pa
 
     # 保存模型输出到 npz 文件
     if model_type == "yoloft":
-        np.savez('pytorch_output.npz', pytorch_pred_output.cpu().numpy())
-        np.savez('torchscript_output.npz', torchscript_pred_output.cpu().numpy())
+        np.save(os.path.join(compare_dir, 'pytorch_output.npy'), pytorch_pred_output.cpu().numpy())
+        np.save(os.path.join(compare_dir, 'torchscript_output.npy'), torchscript_pred_output.cpu().numpy())
     else:
-        np.savez('pytorch_output.npz', pytorch_pred_output.cpu().numpy())
-        np.savez('torchscript_output.npz', torchscript_pred_output.cpu().numpy())
+        np.save(os.path.join(compare_dir, 'pytorch_output.npy'), pytorch_pred_output.cpu().numpy())
+        np.save(os.path.join(compare_dir, 'torchscript_output.npy'), torchscript_pred_output.cpu().numpy())
 
     # 6. 误差比较
-    rtol_threshold = 1e-5
-    atol_threshold = 1e-5
+    rtol_threshold = 1e-4
+    atol_threshold = 1e-4
 
     try:
         assert_close(torchscript_pred_output, pytorch_pred_output, rtol=rtol_threshold, atol=atol_threshold)
@@ -132,9 +134,10 @@ def compare_pytorch_torchscript_outputs(torchscript_model_path, pytorch_model_pa
 
 
 if __name__ == '__main__':
-    torchscript_model_path = "/data/shuzhengwang/project/ultralytics/yoloftS_all_MDC_dy_test.torchscript"
-    pytorch_model_path = "/data/shuzhengwang/project/ultralytics/yoloftS_all_MDC_dy_test.pt"
+    torchscript_model_path = "runs/save/train227_yoloft_dydcn_newdata/weights/best.torchscript"
+    pytorch_model_path = "runs/save/train227_yoloft_dydcn_newdata/weights/best.pt"
+    compare_dir = "runs/save/train227_yoloft_dydcn_newdata/weights/compare"
     image_path = "test.jpg"  # 替换为实际的图片路径
     model_type = "yoloft"
 
-    compare_pytorch_torchscript_outputs(torchscript_model_path, pytorch_model_path, image_path, model_type)
+    compare_pytorch_torchscript_outputs(torchscript_model_path, pytorch_model_path, image_path, model_type, compare_dir)

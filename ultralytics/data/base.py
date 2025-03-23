@@ -418,7 +418,7 @@ class BaseDataset_2(Dataset):
 
         # Buffer thread for mosaic images
         self.buffer = []  # buffer size = batch size
-        self.max_buffer_length = min((self.ni, self.batch_size * 8, 500)) if self.augment else 0
+        self.max_buffer_length = min((self.ni, self.batch_size * 8, 1000)) if self.augment else 0
 
         # Cache images (options are cache = True, False, None, "ram", "disk")
         self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni

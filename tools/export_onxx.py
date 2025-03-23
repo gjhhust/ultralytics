@@ -2,11 +2,11 @@ from ultralytics import YOLO, YOLOFT, YOLOWorld, NAS, SAM, FastSAM, RTDETR
 
 # Load a model
 # model = YOLO("yolo11n.pt")  # load an official model
-model = YOLOFT("config/yoloft_onxx/yoloftS_v2-ALL-MDC_dysample.yaml")  # load a custom trained model
+model = YOLOFT("runs/detect/train317/weights/best.pt")  # load a custom trained model
 
 # Export the model
-# model.export(format="onnx", imgsz=869, simplify=True)
-model.export(format='onnx', imgsz=896) # imgsz 参数需要与你的模型输入尺寸匹配
+model.export(format="onnx", imgsz=896)
+# model.export(format='openvino', int8=True, imgsz=896, data="config/dataset/Train_6_Test_14569_single.yaml") # imgsz 参数需要与你的模型输入尺寸匹配
 
 # import onnx
 # from onnxruntime.quantization import quantize_dynamic, QuantType

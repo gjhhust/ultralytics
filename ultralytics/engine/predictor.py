@@ -215,7 +215,7 @@ class BasePredictor:
         ):  # videos
             LOGGER.warning(STREAM_WARNING)
         self.vid_writer = {}
-
+    
     @smart_inference_mode()
     def stream_inference(self, source=None, model=None, *args, **kwargs):
         """Streams real-time inference on camera feed and saves results to file."""
@@ -245,8 +245,9 @@ class BasePredictor:
                 ops.Profile(device=self.device),
                 ops.Profile(device=self.device),
             )
+
             self.run_callbacks("on_predict_start")
-            for self.batch in self.dataset:
+            for i, self.batch in enumerate(self.dataset):
                 self.run_callbacks("on_predict_batch_start")
                 paths, im0s, s = self.batch
 

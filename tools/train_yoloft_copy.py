@@ -6,11 +6,10 @@ from ultralytics import YOLOFT
 # model = YOLO("config/yolo/yolov8_S.yaml").load("yolov8s.pt") #train yolov8-l
 # model = YOLO("config/yoloft/yoloftsv2-C-384.yaml").load("./yoloft-C-384_obj365_e7.pt")
 # model = YOLOFT("runs/detect/train19/weights/last.pt")
-# model = YOLO("config/yoloft/yoloftsv2-C-384.yaml").load("./yoloft-C-384_obj365_e7.pt")
-model = YOLOFT("config/yoloft_onxx/yoloftS_seg.yaml").load("pretrain/yolos/yoloftS_coco200e41.3.pt")
+model = YOLOFT("config/yoloft_onxx/yoloftS_all2_dy_s1_t.yaml").load("pretrain/yolos-all/yoloftS_v2-ALL-384.pt")
+# model = YOLOFT("runs/save/train62_yolofts_dy_dcns1/weights/best.pt")
 
-results = model.train(data="config/dataset/coco8-seg.yaml",
-                      cfg="config/train/gaode_train.yaml",  #修改了数据变换，iou阈值0.5，关闭masic为20epoch
-                      # batch=6*2, epochs=35, imgsz=896, device=[2,3],workers = 4)
-                    batch=4, epochs=35, imgsz=896, device=[3],workers = 6)
-# print("yoloftsv2-C-384_cbam_Focus \nload(./yolov8s.pt)  \nTrain_6_Test_gaode6")
+results = model.train(data="config/dataset/Train_6_Test_14569_single.yaml",
+                      cfg="config/train/gaode_train_single.yaml",
+                      batch=10*2, epochs=25, imgsz=896, device=[2,3],workers = 4)
+print("8length")

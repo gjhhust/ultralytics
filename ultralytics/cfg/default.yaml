@@ -6,6 +6,7 @@ mode: train # (str) YOLO mode, i.e. train, val, predict, export, track, benchmar
 
 train_slit: [0,2,20]
 use_trend_loss_weight: False
+constrained: False
 
 # Train settings -------------------------------------------------------------------------------------------------------
 model: # (str, optional) path to model file, i.e. yolov8n.pt, yolov8n.yaml

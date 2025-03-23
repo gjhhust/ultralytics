@@ -16,6 +16,9 @@ from ultralytics.cfg import get_cfg, get_save_dir
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset
 from ultralytics.nn.autobackend import AutoBackend
 from ultralytics.utils import LOGGER, TQDM, callbacks, colorstr, emojis
+from ultralytics.utils.torch_utils import (
+    autocast
+    )
 from ultralytics.utils.checks import check_imgsz
 from ultralytics.utils.ops import Profile
 from ultralytics.utils.torch_utils import de_parallel, select_device, smart_inference_mode
@@ -169,9 +172,13 @@ class DetectionValidator(BaseValidator):
                 batch = self.preprocess(batch)
                     
             # Inference
-            with dt[1]:
-                preds, save_fmaps = model((batch["img"], save_fmaps), augment=augment)
-
+            if self.training:
+                with autocast(self.args.half):
+                    with dt[1]:
+                        preds, save_fmaps = model((batch["img"], save_fmaps), augment=augment)
+            else:
+                with dt[1]:
+                    preds, save_fmaps = model((batch["img"], save_fmaps), augment=augment)
             # Loss
             with dt[2]:
                 if self.training:

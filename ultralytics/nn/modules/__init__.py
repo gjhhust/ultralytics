@@ -35,6 +35,7 @@ from .block import (
     Attention,
     BNContrastiveHead,
     Bottleneck,
+    Bottleneck_DCNV3,
     BottleneckCSP,
     C2f,
     C2f_DCNV3,
@@ -63,6 +64,8 @@ from .block import (
     MSTF_STREAM_cbam,
     C2f_ODConv,
     DySample,
+    MSTFDC,
+    MSTFDC_T
 )
 from .conv import (
     CBAM,
@@ -81,7 +84,8 @@ from .conv import (
     List_Split,
     InputData,
     ModulatedDeformConv,
-    DeformConv
+    DeformConv,
+    DCNV3_conv
 )
 from .deform_conv import ModulatedDeformConv2dPack_MLU, count_modulated_deform_conv2d_pack_mlu
 from .head import OBB, Classify, Detect, Pose, RTDETRDecoder, Segment, WorldDetect, v10Detect

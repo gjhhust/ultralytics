@@ -874,7 +874,7 @@ class SAM2VideoPredictor(SAM2Predictor):
         model.set_binarize(True)
         return model
 
-    def inference(self, im, bboxes=None, points=None, labels=None, masks=None):
+    def inference(self, im, bboxes=None, points=None, labels=None, masks=None, muti_frame_prompt=False, frame_prompt_info={}):
         """
         Perform image segmentation inference based on the given input cues, using the currently loaded image. This
         method leverages SAM's (Segment Anything Model) architecture consisting of image encoder, prompt encoder, and
@@ -900,13 +900,27 @@ class SAM2VideoPredictor(SAM2Predictor):
         self.inference_state["im"] = im
         output_dict = self.inference_state["output_dict"]
         if len(output_dict["cond_frame_outputs"]) == 0:  # initialize prompts
-            points, labels, masks = self._prepare_prompts(im.shape[2:], bboxes, points, labels, masks)
-            if points is not None:
-                for i in range(len(points)):
-                    self.add_new_prompts(obj_id=i, points=points[[i]], labels=labels[[i]], frame_idx=frame)
-            elif masks is not None:
-                for i in range(len(masks)):
-                    self.add_new_prompts(obj_id=i, masks=masks[[i]], frame_idx=frame)
+            if muti_frame_prompt:
+                for frame_id, prompts in frame_prompt_info.items():
+                    bboxes = prompts.pop("bboxes", None)
+                    points = prompts.pop("points", None)
+                    masks = prompts.pop("masks", None)
+                    instance_ids = prompts.pop("instance_ids", [])
+                    points, labels, masks = self._prepare_prompts(im.shape[2:], bboxes, points, labels, masks)
+                    if points is not None:
+                        for i in range(len(points)):
+                            self.add_new_prompts(obj_id=instance_ids[i], points=points[[i]], labels=labels[[i]], frame_idx=frame_id+1)
+                    elif masks is not None:
+                        for i in range(len(masks)):
+                            self.add_new_prompts(obj_id=instance_ids[i], masks=masks[[i]], frame_idx=frame_id+1)
+            else:
+                points, labels, masks = self._prepare_prompts(im.shape[2:], bboxes, points, labels, masks)
+                if points is not None:
+                    for i in range(len(points)):
+                        self.add_new_prompts(obj_id=i, points=points[[i]], labels=labels[[i]], frame_idx=frame)
+                elif masks is not None:
+                    for i in range(len(masks)):
+                        self.add_new_prompts(obj_id=i, masks=masks[[i]], frame_idx=frame)
         self.propagate_in_video_preflight()
 
         consolidated_frame_inds = self.inference_state["consolidated_frame_inds"]
