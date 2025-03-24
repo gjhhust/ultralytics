@@ -1703,7 +1703,7 @@ class FDCN(nn.Module):
         self.offset_scale = offset_scale
         self.center_feature_scale = center_feature_scale
         self.gru = gru
-
+        self.encoder = Conv(channels, channels//3, k=1)
         self.dw_conv = nn.Sequential(
             nn.Conv2d(
                 channels,
@@ -1746,7 +1746,8 @@ class FDCN(nn.Module):
         :param input_y                      (N, C, H, W)
         :return output                     (N, C, H, W)
         """
-        input_y = self.gru(input_y, input_x)
+        input_x_en = self.encoder(input_x)
+        input_y = self.gru(input_y, input_x_en)
         input = input_x.permute(0, 2, 3, 1) #(N, H, W, C)
         
         N, H, W, _ = input.shape
@@ -1795,7 +1796,7 @@ class MSTFDC(nn.Module):
         assert in_channels[0] == in_channels[1:], f"input last feature dims must equal to now feature dims, plase set InputData:[f{in_channels[1:]}]"
         in_channels = in_channels[1:]
         self.flows = nn.ModuleList([
-            FDCN(SepConvGRU(hidden_dim=ic, input_dim=ic), ic) if i == 0 else FDCN(ConvGRU(hidden_dim=ic, input_dim=ic), ic)
+            FDCN(SepConvGRU(hidden_dim=ic, input_dim=ic//3), ic) if i == 0 else FDCN(ConvGRU(hidden_dim=ic, input_dim=ic//3), ic)
             for i, ic in enumerate(in_channels)
         ])
         
@@ -1812,7 +1813,7 @@ class MSTFDC(nn.Module):
         nets = []
         for fn, fo, f_layer in zip(fmaps_new, fmaps_old, self.flows):
             f, net = f_layer(fn, fo)
-            fs.append(f)
+            fs.append(f+fn)
             nets.append(net)
         return fs+nets
         # return fmaps_new+fmaps_old

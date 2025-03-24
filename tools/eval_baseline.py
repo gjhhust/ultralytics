@@ -2,7 +2,7 @@ from ultralytics import YOLO, YOLOFT
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_type", type=str, default='YOLOFT')
-parser.add_argument("--model_wight", type=str, default='')
+parser.add_argument("--model_wight", type=str, default='runs/save/train227_yoloft_dydcn_newdata/weights/best.pt')
 parser.add_argument("--dataset", type=str, default='config/dataset/Train_6_Test_task1.yaml')
 args = parser.parse_args()
 # Load a COCO-pretrained RT-DETR-l model

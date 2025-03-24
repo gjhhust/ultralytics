@@ -52,11 +52,11 @@ def compare_pytorch_onnx_outputs(onnx_model_path, pytorch_model_path, model_type
         fmaps_torch = [fmap2_torch, fmap1_torch, fmap0_torch]
 
 
-    np.save(os.path.join(compare_dir, 'input_img.npy'), input_image_np)
+    np.save(os.path.join(compare_dir, 'input0.npy'), input_image_np)
     if model_type == "yoloft":
-        np.save(os.path.join(compare_dir, 'fmap2_np.npy'), fmap2_np)
-        np.save(os.path.join(compare_dir, 'fmap1_np.npy'), fmap1_np)
-        np.save(os.path.join(compare_dir, 'fmap0_np.npy'), fmap0_np)
+        np.save(os.path.join(compare_dir, 'input1.npy'), fmap2_np)
+        np.save(os.path.join(compare_dir, 'input2.npy'), fmap1_np)
+        np.save(os.path.join(compare_dir, 'input3.npy'), fmap0_np)
 
     # 4. 进行 PyTorch 推理
     with torch.no_grad():
@@ -129,6 +129,10 @@ def compare_pytorch_onnx_outputs(onnx_model_path, pytorch_model_path, model_type
     atol_threshold = 1e-5
 
     try:
+        np.save(os.path.join(compare_dir, 'onnx_pred_output0.npy'), onnx_pred_output)
+        np.save(os.path.join(compare_dir, 'onnx_pred_output1.npy'), onnx_pred_fmaps[0])
+        np.save(os.path.join(compare_dir, 'onnx_pred_output2.npy'), onnx_pred_fmaps[1])
+        np.save(os.path.join(compare_dir, 'onnx_pred_output3.npy'), onnx_pred_fmaps[2])
         assert_close(torch.tensor(onnx_pred_output), torch.tensor(pytorch_pred_output), rtol=rtol_threshold, atol=atol_threshold)
         assert_close(torch.tensor(onnx_pred_fmaps[0]), torch.tensor(pytorch_fmaps_outputs[0]), rtol=rtol_threshold, atol=atol_threshold)
         assert_close(torch.tensor(onnx_pred_fmaps[1]), torch.tensor(pytorch_fmaps_outputs[1]), rtol=rtol_threshold, atol=atol_threshold)
@@ -141,9 +145,9 @@ def compare_pytorch_onnx_outputs(onnx_model_path, pytorch_model_path, model_type
 
 
 if __name__ == '__main__':
-    onnx_model_path = "runs/save/train317_YOLOftS_dcn_dy_s1_t/weights/best.onnx" # 替换为你的 ONNX 模型路径
-    pytorch_model_path = "runs/save/train317_YOLOftS_dcn_dy_s1_t/weights/best.pt" 
-    compare_dir = "runs/save/train317_YOLOftS_dcn_dy_s1_t/weights/compare"
+    onnx_model_path = "/data/shuzhengwang/project/ultralytics/runs/detect/train319/weights/epoch12.onnx" # 替换为你的 ONNX 模型路径
+    pytorch_model_path = "/data/shuzhengwang/project/ultralytics/runs/detect/train319/weights/epoch12.pt" 
+    compare_dir = "/data/shuzhengwang/project/ultralytics/runs/detect/train319/weights/compare"
     model_type = "yoloft" # 或者 "yoloft" 根据你的模型类型设置
     
     # onnx_model_path = "/data/shuzhengwang/project/ultralytics/runs/save/train217_yolos_newdata/weights/best.onnx" # 替换为你的 ONNX 模型路径

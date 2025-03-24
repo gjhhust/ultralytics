@@ -18,10 +18,11 @@ test: /data/jiahaoguo/datasets/gaode_6/annotations/task1/task1_test.txt
 test_labels_dir: /data/jiahaoguo/datasets/gaode_6/annotations/yolo/
 test_images_dir: /data/jiahaoguo/datasets/gaode_6/images/
 
-split_length: [2] #先使用10的片段训练，再50 "all"表示不切割 #{2:12, 3:8, 4:6, 5:5, 6:4}
+split_length: [1] #先使用10的片段训练，再50 "all"表示不切割 #{2:12, 3:8, 4:6, 5:5, 6:4}
 
-split_batch_dict: 
-  2: 16 #s1
+split_batch_dict:
+  1: 28
+  2: 15 #s1
   3: 8
   4: 6
   5: 5
