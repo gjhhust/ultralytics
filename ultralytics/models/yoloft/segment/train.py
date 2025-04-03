@@ -8,7 +8,7 @@ from ultralytics.utils import DEFAULT_CFG, RANK
 from ultralytics.utils.plotting import plot_images, plot_results
 
 
-class SegmentationTrainer(yolo.detect.DetectionTrainer):
+class SegmentationTrainer(yoloft.detect.DetectionTrainer):
     """
     A class extending the DetectionTrainer class for training based on a segmentation model.
 
@@ -40,7 +40,7 @@ class SegmentationTrainer(yolo.detect.DetectionTrainer):
     def get_validator(self):
         """Return an instance of SegmentationValidator for validation of YOLO model."""
         self.loss_names = "box_loss", "seg_loss", "cls_loss", "dfl_loss"
-        return yolo.segment.SegmentationValidator(
+        return yoloft.segment.SegmentationValidator(
             self.test_loader, save_dir=self.save_dir, args=copy(self.args), _callbacks=self.callbacks
         )
 

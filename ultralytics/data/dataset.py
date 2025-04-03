@@ -171,6 +171,52 @@ class YOLODataset(BaseDataset):
             LOGGER.warning(f"WARNING ⚠️ No labels found in {cache_path}, training may not work correctly. {HELP_URL}")
         return labels
 
+    def img2label_paths(self,img_paths):
+        # sa, sb = f'{self.images_dir}', f'{self.labels_dir}'  # /images/, /labels/ substrings
+        return [path.replace(sa, sb).split('.')[0]+'.txt' for path, sa, sb  in zip(img_paths, self.images_dir, self.labels_dir)]
+    
+    def get_labels_new(self):
+        """Returns dictionary of labels for YOLO training."""
+        self.label_files = self.img2label_paths(self.im_files)
+        # cache_path = Path(combine_unique_folders([os.path.splitext(p)[0] for p in self.img_path])).with_suffix('.cache')
+        cache_path = Path(self.img_path).with_suffix(".cache")
+        try:
+            cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file
+            assert cache["version"] == DATASET_CACHE_VERSION  # matches current version
+            assert cache["hash"] == get_hash(self.label_files + self.im_files)  # identical hash
+        except (FileNotFoundError, AssertionError, AttributeError):
+            cache, exists = self.cache_labels(cache_path), False  # run cache ops
+
+        # Display cache
+        nf, nm, ne, nc, n = cache.pop("results")  # found, missing, empty, corrupt, total
+        if exists and LOCAL_RANK in {-1, 0}:
+            d = f"Scanning {cache_path}... {nf} images, {nm + ne} backgrounds, {nc} corrupt"
+            TQDM(None, desc=self.prefix + d, total=n, initial=n)  # display results
+            if cache["msgs"]:
+                LOGGER.info("\n".join(cache["msgs"]))  # display warnings
+
+        # Read cache
+        [cache.pop(k) for k in ("hash", "version", "msgs")]  # remove items
+        labels = cache["labels"]
+        if not labels:
+            LOGGER.warning(f"WARNING ⚠️ No images found in {cache_path}, training may not work correctly. {HELP_URL}")
+        self.im_files = [lb["im_file"] for lb in labels]  # update im_files
+
+        # Check if the dataset is all boxes or all segments
+        lengths = ((len(lb["cls"]), len(lb["bboxes"]), len(lb["segments"])) for lb in labels)
+        len_cls, len_boxes, len_segments = (sum(x) for x in zip(*lengths))
+        if len_segments and len_boxes != len_segments:
+            LOGGER.warning(
+                f"WARNING ⚠️ Box and segment counts should be equal, but got len(segments) = {len_segments}, "
+                f"len(boxes) = {len_boxes}. To resolve this only boxes will be used and all segments will be removed. "
+                "To avoid this please supply either a detect or segment dataset, not a detect-segment mixed dataset."
+            )
+            for lb in labels:
+                lb["segments"] = []
+        if len_cls == 0:
+            LOGGER.warning(f"WARNING ⚠️ No labels found in {cache_path}, training may not work correctly. {HELP_URL}")
+        return labels
+    
     def build_transforms(self, hyp=None):
         """Builds and appends transforms to the list."""
         if self.augment:
@@ -804,7 +850,7 @@ class YOLOStreamDataset(BaseDataset_2):
             return file_name_mapping_id.get(im_file, 0)
         return 0
     
-    def video_sampler_split(self, video_image_dict, mode="all",length=100, raandom_seed=100):
+    def video_sampler_split(self, video_image_dict, mode="all",length=4, raandom_seed=100):
         '''
         mode: all split_random split_legnth
         interval_mode all[[1,3,5],[2,4,6]], one[[1,3,5]],

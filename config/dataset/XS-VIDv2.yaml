@@ -17,14 +17,23 @@ test: /data/shuzhengwang/datasets/XS-VID/annotations/yolo/test.txt
 test_labels_dir: /data/shuzhengwang/datasets/XS-VID/annotations/yolo/
 test_images_dir: /data/shuzhengwang/datasets/XS-VID/images/
 
-split_length: [2, 4, 8] #先使用10的片段训练，再50 "all"表示不切割
+split_length: [1] #先使用10的片段训练，再50 "all"表示不切割 #{2:12, 3:8, 4:6, 5:5, 6:4}
+
+split_batch_dict:
+  1: 32
+  2: 15 #s1
+  3: 8
+  4: 6
+  5: 5
+  6: 4
+  8: 7
 
 match_number: 1  #当前帧前后各取一共几个关连帧，match_number=2即前后各取一个
 interval: 2    # 取得帧间隔当前帧
 interval_mode: interval #all：interval也会取尽所有视频 single则all/interval数量
 
 #coco eval
-eval_ann_json: /data/shuzhengwang/datasets/XS-VID/annotations/test.json
+eval_ann_json: /data/shuzhengwang/datasets/XS-VID/annotations/fix/test.json
 classes_map: [0,1,2,3,4,5,6]
 # Classes
 names:

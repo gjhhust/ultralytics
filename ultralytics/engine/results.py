@@ -624,8 +624,8 @@ class Results(SimpleClass):
         """
         if not filename:
             filename = f"results_{Path(self.path).name}"
-        self.plot(save=True, filename=filename, *args, **kwargs)
-        return filename
+        im = self.plot(save=True, filename=filename, *args, **kwargs)
+        return filename, im
 
     def verbose(self):
         """

@@ -2,11 +2,11 @@ from ultralytics import YOLO, YOLOFT, YOLOWorld, NAS, SAM, FastSAM, RTDETR
 
 # Load a model
 # model = YOLO("yolo11n.pt")  # load an official model
-model = YOLOFT("runs/save/train227_yoloft_dydcn_newdata/weights/best.pt")  # load a custom trained model
+model = YOLOFT("runs/save/train330_YOLOftS_all2_dy_s1_t_60/weights/best.pt")  # load a custom trained model
 
 # Export the model
 # model.export(format="onnx", imgsz=869, simplify=True)
-model.export(format="edgetpu", imgsz=896) # imgsz 参数需要与你的模型输入尺寸匹配
+model.export(format="openvino", imgsz=896, int8=True, data= "config/dataset/Train_6_Test_task1_2videos.yaml") # imgsz 参数需要与你的模型输入尺寸匹配
 
 # import onnx
 # torch.jit.trace

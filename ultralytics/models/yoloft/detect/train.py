@@ -3,7 +3,7 @@
 import math
 import random
 from copy import copy
-
+from torch import nn, optim
 import os
 import numpy as np
 import torch.nn as nn
@@ -508,6 +508,175 @@ class DetectionTrainer(BaseTrainer):
         max_num_obj = max(len(label["cls"]) for label in train_dataset.labels) * 4
         return super().auto_batch(max_num_obj)
 
+    def build_optimizer(self, model, model_teacher=None, name="auto", lr=0.001, momentum=0.9, decay=1e-5, iterations=1e5):
+        """
+        Constructs an optimizer for the given model, based on the specified optimizer name, learning rate, momentum,
+        weight decay, and number of iterations.
+
+        Args:
+            model (torch.nn.Module): The model for which to build an optimizer.
+            name (str, optional): The name of the optimizer to use. If 'auto', the optimizer is selected
+                based on the number of iterations. Default: 'auto'.
+            lr (float, optional): The learning rate for the optimizer. Default: 0.001.
+            momentum (float, optional): The momentum factor for the optimizer. Default: 0.9.
+            decay (float, optional): The weight decay for the optimizer. Default: 1e-5.
+            iterations (float, optional): The number of iterations, which determines the optimizer if
+                name is 'auto'. Default: 1e5.
+
+        Returns:
+            (torch.optim.Optimizer): The constructed optimizer.
+        """
+        g = [], [], []  # optimizer parameter groups
+        bn = tuple(v for k, v in nn.__dict__.items() if "Norm" in k)  # normalization layers, i.e. BatchNorm2d()
+        if name == "auto":
+            LOGGER.info(
+                f"{colorstr('optimizer:')} 'optimizer=auto' found, "
+                f"ignoring 'lr0={self.args.lr0}' and 'momentum={self.args.momentum}' and "
+                f"determining best 'optimizer', 'lr0' and 'momentum' automatically... "
+            )
+            nc = getattr(model, "nc", 10)  # number of classes
+            lr_fit = round(0.002 * 5 / (4 + nc), 6)  # lr0 fit equation to 6 decimal places
+            name, lr, momentum = ("SGD", 0.01, 0.9) if iterations > 10000 else ("AdamW", lr_fit, 0.9)
+            self.args.warmup_bias_lr = 0.0  # no higher than 0.01 for Adam
+
+        for module_name, module in model.named_modules():
+            for param_name, param in module.named_parameters(recurse=False):
+                fullname = f"{module_name}.{param_name}" if module_name else param_name
+                if "bias" in fullname:  # bias (no decay)
+                    g[2].append(param)
+                elif isinstance(module, bn):  # weight (no decay)
+                    g[1].append(param)
+                else:  # weight (with decay)
+                    g[0].append(param)
+        # change new_____________________
+        if self.Distillation is not None:
+            for v in model_teacher.modules():
+                # print(v)
+                if hasattr(v, 'bias') and isinstance(v.bias, nn.Parameter):  # bias (no decay)
+                    g[2].append(v.bias)
+                if isinstance(v, bn):  # weight (no decay)
+                    g[1].append(v.weight)
+                elif hasattr(v, 'weight') and isinstance(v.weight, nn.Parameter):  # weight (with decay)
+                    g[0].append(v.weight)
+
+        optimizers = {"Adam", "Adamax", "AdamW", "NAdam", "RAdam", "RMSProp", "SGD", "auto"}
+        name = {x.lower(): x for x in optimizers}.get(name.lower())
+        if name in {"Adam", "Adamax", "AdamW", "NAdam", "RAdam"}:
+            optimizer = getattr(optim, name, optim.Adam)(g[2], lr=lr, betas=(momentum, 0.999), weight_decay=0.0)
+        elif name == "RMSProp":
+            optimizer = optim.RMSprop(g[2], lr=lr, momentum=momentum)
+        elif name == "SGD":
+            optimizer = optim.SGD(g[2], lr=lr, momentum=momentum, nesterov=True)
+        else:
+            raise NotImplementedError(
+                f"Optimizer '{name}' not found in list of available optimizers {optimizers}. "
+                "Request support for addition optimizers at https://github.com/ultralytics/ultralytics."
+            )
+
+        optimizer.add_param_group({"params": g[0], "weight_decay": decay})  # add g0 with weight_decay
+        optimizer.add_param_group({"params": g[1], "weight_decay": 0.0})  # add g1 (BatchNorm2d weights)
+        LOGGER.info(
+            f"{colorstr('optimizer:')} {type(optimizer).__name__}(lr={lr}, momentum={momentum}) with parameter groups "
+            f'{len(g[1])} weight(decay=0.0), {len(g[0])} weight(decay={decay}), {len(g[2])} bias(decay=0.0)'
+        )
+        return optimizer
+    
+    # def build_optimizer(self, model, model_teacher=None, name="auto", lr=0.001, momentum=0.9, decay=1e-5, iterations=1e5):
+    #     """
+    #     Constructs an optimizer with different learning rates for temporal layers and other layers.
+    #     Temporal layers specified by self.args.time_model will use the base learning rate (lr),
+    #     while other layers will use lr * lr_scale (default 0.1).
+    #     """
+    #     # 获取时间层配置和学习率缩放比例
+    #     time_layers = getattr(self.args, 'time_model', [])
+    #     lr_scale = getattr(self.args, 'lr_scale', 0.1)  # 默认缩放比例为0.1
+    #     time_layer_prefixes = [f'model.{x}.' for x in time_layers]
+    #     if len(time_layer_prefixes) == 0:
+    #         lr_scale = 1.0
+    #         LOGGER.info("no time_layer_prefixes, all layer use normal lr")
+    #     else:
+    #         LOGGER.info(f"time_layer_prefixes: {time_layer_prefixes}, other layer use {lr_scale}*lr")
+
+    #     # 参数分组：时间层和其他层各分为权重、BN、bias三组
+    #     g_time = [[], [], []]  # 时间层的权重、BN、bias
+    #     g_other = [[], [], []]  # 其他层的权重、BN、bias
+    #     bn = tuple(v for k, v in nn.__dict__.items() if "Norm" in k)  # BN层类型
+
+    #     # 遍历模型的参数，分配到时序层或其他层组
+    #     for module_name, module in model.named_modules():
+    #         for param_name, param in module.named_parameters(recurse=False):
+    #             fullname = f"{module_name}.{param_name}" if module_name else param_name
+    #             # 判断参数所属的原组（权重、BN、bias）
+    #             if "bias" in fullname:
+    #                 group_idx = 2
+    #             elif isinstance(module, bn):
+    #                 group_idx = 1
+    #             else:
+    #                 group_idx = 0
+    #             # 检查是否属于时间层
+    #             is_time_layer = any(fullname.startswith(prefix) for prefix in time_layer_prefixes)
+    #             # 分配到对应的组
+    #             if is_time_layer:
+    #                 g_time[group_idx].append(param)
+    #             else:
+    #                 g_other[group_idx].append(param)
+
+    #     # 处理知识蒸馏中的教师模型参数（添加到其他层组）
+    #     if self.Distillation is not None and model_teacher is not None:
+    #         for module_name, module in model_teacher.named_modules():
+    #             for param_name, param in module.named_parameters(recurse=False):
+    #                 fullname = f"{module_name}.{param_name}" if module_name else param_name
+    #                 # 教师模型参数默认分配到其他层组
+    #                 if "bias" in fullname:
+    #                     group_idx = 2
+    #                 elif isinstance(module, bn):
+    #                     group_idx = 1
+    #                 else:
+    #                     group_idx = 0
+    #                 g_other[group_idx].append(param)
+
+    #     # 构建参数组列表，排除空组
+    #     param_groups = []
+    #     # 时间层参数组（学习率不变）
+    #     for group_idx in range(3):
+    #         params = g_time[group_idx]
+    #         if not params:
+    #             continue
+    #         wd = decay if group_idx == 0 else 0.0  # 仅权重组有decay
+    #         param_groups.append({'params': params, 'weight_decay': wd, 'lr': lr})
+            
+    #     # 其他层参数组（学习率缩放）
+    #     for group_idx in range(3):
+    #         params = g_other[group_idx]
+    #         if not params:
+    #             continue
+    #         wd = decay if group_idx == 0 else 0.0
+    #         param_groups.append({'params': params, 'weight_decay': wd, 'lr': lr * lr_scale})
+
+    #     # 根据优化器类型初始化
+    #     optimizers = {"Adam", "Adamax", "AdamW", "NAdam", "RAdam", "RMSProp", "SGD", "auto"}
+    #     name = {x.lower(): x for x in optimizers}.get(name.lower())
+    #     if name in {"Adam", "Adamax", "AdamW", "NAdam", "RAdam"}:
+    #         optimizer = getattr(optim, name, optim.Adam)(param_groups, betas=(momentum, 0.999))
+    #     elif name == "RMSProp":
+    #         optimizer = optim.RMSprop(param_groups, momentum=momentum)
+    #     elif name == "SGD":
+    #         optimizer = optim.SGD(param_groups, momentum=momentum, nesterov=True)
+    #     else:
+    #         raise NotImplementedError(f"Optimizer '{name}' not supported.")
+
+    #     # 日志输出参数组信息
+    #     time_counts = [len(g) for g in g_time]
+    #     other_counts = [len(g) for g in g_other]
+    #     LOGGER.info(
+    #         f"{colorstr('optimizer:')} {type(optimizer).__name__} configured with:\n"
+    #         f"Temporal layers (lr={lr}): {sum(time_counts)} params - "
+    #         f"{time_counts[0]} weights(decay={decay}), {time_counts[1]} BN, {time_counts[2]} bias\n"
+    #         f"Other layers (lr={lr*lr_scale}): {sum(other_counts)} params - "
+    #         f"{other_counts[0]} weights(decay={decay}), {other_counts[1]} BN, {other_counts[2]} bias"
+    #     )
+
+    #     return optimizer
 
 class CWDLoss(nn.Module):
     """PyTorch version of `Channel-wise Distillation for Semantic Segmentation.

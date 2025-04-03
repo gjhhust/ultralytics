@@ -10,11 +10,11 @@ train: /data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_rm198_filte
 train_labels_dir: /data/jiahaoguo/datasets/gaode_6/annotations/yolo/
 train_images_dir: /data/jiahaoguo/datasets/gaode_6/images/
 
-val: /data/jiahaoguo/datasets/gaode_6/annotations/task1_2videos.txt
+val: /data/jiahaoguo/datasets/gaode_6/annotations/task1/task1_test.txt
 val_labels_dir: /data/jiahaoguo/datasets/gaode_6/annotations/yolo/
 val_images_dir: /data/jiahaoguo/datasets/gaode_6/images/
 
-test: /data/jiahaoguo/datasets/gaode_6/annotations/task1_2videos.txt
+test: /data/jiahaoguo/datasets/gaode_6/annotations/task1/task1_test.txt
 test_labels_dir: /data/jiahaoguo/datasets/gaode_6/annotations/yolo/
 test_images_dir: /data/jiahaoguo/datasets/gaode_6/images/
 

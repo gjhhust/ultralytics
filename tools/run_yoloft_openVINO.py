@@ -311,9 +311,9 @@ class StreamBuffer_onnx(object):
             self.spatial_shape = spatial_shape 
             assert spatial_shape[-1] == spatial_shape[-2] # [1, C, H, W] H==W
             imagz = spatial_shape[-1]
-            return (np.zeros([1, 64, imagz//4, imagz//4], dtype=np.float32), 
-                                    np.zeros([1, 104, imagz//8, imagz//8], dtype=np.float32), 
-                                    np.zeros([1, 192, imagz//16, imagz//16], dtype=np.float32))
+            return (np.zeros([1, imagz//8, imagz//8, 104], dtype=np.float32), 
+            np.zeros([1, imagz//16, imagz//16, 192], dtype=np.float32),
+            np.zeros([1, imagz//32, imagz//32, 384], dtype=np.float32))
             
         for i in range(self.bs):
             if frame_ids[i] == 0:
@@ -651,7 +651,8 @@ imagz = args.imagz
 print("model_test: ", args.model_path)
 print("json_path: ", args.json_path)
 print("pred_json: ", args.pred_json)
-
+os.makedirs(os.path.dirname(args.pred_json), exist_ok=True)
+print(f"pred json will save in {os.path.dirname(args.pred_json)}")
 
 dataset = CocoVIDDataset(json_path, images_dir, imagz=imagz) # 加载数据集
 dataloader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=custom_collate)
@@ -666,9 +667,10 @@ coco_evaluator = CocoEvaluators(eval_ann_json=args.json_path,
                          nc=2)
 
 
-save_fmaps_orige = [np.zeros([1, imagz//4, imagz//4, 64], dtype=np.float32), 
+save_fmaps_orige = [
             np.zeros([1, imagz//8, imagz//8, 104], dtype=np.float32), 
-            np.zeros([1, imagz//16, imagz//16, 192], dtype=np.float32)]
+            np.zeros([1, imagz//16, imagz//16, 192], dtype=np.float32),
+            np.zeros([1, imagz//32, imagz//32, 384], dtype=np.float32), ]
 
 for i, batch in enumerate(tqdm(dataloader, total=len(dataloader))):
     img_np, file_names, frame_ids, transform_infos = batch

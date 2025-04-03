@@ -28,7 +28,7 @@ backbone:
 
 # YOLOv8.0n head
 head:
-  - [[1, 7, 9, 12], 1, MSTF_STREAM, [1.0, 1.0]] # depth, width  13
+  - [[1, 7, 9, 12], 1, MSTFDC_T, []] # depth, width  13
 
   - [13, 1, List_Split, [0]] #1/4                             14
   - [13, 1, List_Split, [1]] #1/8                            15

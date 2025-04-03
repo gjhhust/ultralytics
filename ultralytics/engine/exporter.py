@@ -603,9 +603,9 @@ class Exporter:
                 assert data_item.dtype == torch.uint8, "Input image must be uint8 for the quantization preprocessing"
                 im = data_item.numpy().astype(np.float32) / 255.0  # uint8 to fp16/32 and 0 - 255 to 0.0 - 1.0
                 return (np.expand_dims(im, 0) if im.ndim == 3 else im,
-                        np.zeros([1, self.imgsz[0]//4, self.imgsz[0]//4, 64], dtype=np.float32), 
-                        np.zeros([1, self.imgsz[0]//8, self.imgsz[0]//8, 104], dtype=np.float32), 
-                        np.zeros([1, self.imgsz[0]//16, self.imgsz[0]//16, 192], dtype=np.float32))
+                        np.zeros_like(self.fmaps_old[0], dtype=np.float32), 
+                        np.zeros_like(self.fmaps_old[1], dtype=np.float32), 
+                        np.zeros_like(self.fmaps_old[2], dtype=np.float32))
 
             # Generate calibration data for integer quantization
             ignored_scope = None

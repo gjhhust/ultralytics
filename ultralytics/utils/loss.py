@@ -266,7 +266,7 @@ class BboxLoss_trend(BboxLoss):
         self.ignore_thr = ignore_thr  # 忽略的IoU阈值
         self.ignore_value = ignore_value  # 忽略的IoU值
 
-    def forward(self, pred_dist, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask, support_bboxes):
+    def forward(self, pred_dist, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask, support_bboxes=None):
         """IoU loss."""
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
         iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
@@ -522,6 +522,11 @@ class v8SegmentationLoss(v8DetectionLoss):
             ) from e
 
         # Pboxes
+        if self.use_trend_loss_weight and "support_bboxes" in batch:
+            support_bboxes = xywh2xyxy(batch["support_bboxes"].to(self.device).mul_(imgsz[[1, 0, 1, 0]]))
+        else:
+            support_bboxes = None
+            
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
 
         _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
@@ -549,6 +554,7 @@ class v8SegmentationLoss(v8DetectionLoss):
                 target_scores,
                 target_scores_sum,
                 fg_mask,
+                support_bboxes,
             )
             # Masks loss
             masks = batch["masks"].to(self.device).float()

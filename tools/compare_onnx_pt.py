@@ -37,13 +37,13 @@ def compare_pytorch_onnx_outputs(onnx_model_path, pytorch_model_path, model_type
 
     # 特征图缓冲区初始化 (仅当 model_type == "yoloft" 时需要)
     if model_type == "yoloft":
-        
+        # , , 
+        # fmap2_np = np.random.rand(1, 112, 112, 152).astype(np.float32)
+        # fmap1_np = np.random.rand(1, 56, 56, 288).astype(np.float32)
+        # fmap0_np = np.random.rand(1, 28, 28, 576).astype(np.float32)
         fmap2_np = np.random.rand(1, 112, 112, 104).astype(np.float32)
         fmap1_np = np.random.rand(1, 56, 56, 192).astype(np.float32)
-        fmap0_np = np.random.rand(1, 28, 28, 384).astype(np.float32)
-        # fmap2_np = np.random.rand(1, 112, 112, 104).astype(np.float32)
-        # fmap1_np = np.random.rand(1, 56, 56, 192).astype(np.float32)
-        # fmap0_np = np.random.rand(1, 56//2, 56//2, 384).astype(np.float32)
+        fmap0_np = np.random.rand(1, 56//2, 56//2, 384).astype(np.float32)
         fmaps_np = [fmap2_np, fmap1_np, fmap0_np]
 
         fmap2_torch = torch.tensor(fmap2_np)
@@ -145,9 +145,9 @@ def compare_pytorch_onnx_outputs(onnx_model_path, pytorch_model_path, model_type
 
 
 if __name__ == '__main__':
-    onnx_model_path = "/data/shuzhengwang/project/ultralytics/runs/detect/train319/weights/epoch12.onnx" # 替换为你的 ONNX 模型路径
-    pytorch_model_path = "/data/shuzhengwang/project/ultralytics/runs/detect/train319/weights/epoch12.pt" 
-    compare_dir = "/data/shuzhengwang/project/ultralytics/runs/detect/train319/weights/compare"
+    onnx_model_path = "/data/shuzhengwang/project/ultralytics/runs/save/train330_YOLOftS_all2_dy_s1_t/weights/best.onnx" # 替换为你的 ONNX 模型路径
+    pytorch_model_path = "/data/shuzhengwang/project/ultralytics/runs/save/train330_YOLOftS_all2_dy_s1_t/weights/best.pt" 
+    compare_dir = "runs/save/train330_YOLOftS_all2_dy_s1_t/weights/compare"
     model_type = "yoloft" # 或者 "yoloft" 根据你的模型类型设置
     
     # onnx_model_path = "/data/shuzhengwang/project/ultralytics/runs/save/train217_yolos_newdata/weights/best.onnx" # 替换为你的 ONNX 模型路径
