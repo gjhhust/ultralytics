@@ -83,12 +83,15 @@ https://modelscope.cn/datasets/lanlanlanrr/XS-VID/files
 
 之后修改一下config/dataset/XS-VIDv2.yaml配置文件中的数据集地址即可
 
-单帧训练：split_length: [1]   train_slit: [0] #从0epoch开始就1帧训练
-n帧传递loss训练 split_length: [n]  train_slit: [0] #从0epoch开始就n帧训练
-在一次训练中变化帧训练 split_length: [1, n]   train_slit: [0, 10] #意思是先1帧训练，然后10epoch时进行n帧训练
+（1） 单帧训练：split_length: [1]   train_slit: [0] #从0epoch开始就1帧训练
+
+（2） n帧传递loss训练 split_length: [n]  train_slit: [0] #从0epoch开始就n帧训练
+
+（3）在一次训练中变化帧训练 split_length: [1, n]   train_slit: [0, 10] #意思是先1帧训练，然后10epoch时进行n帧训练
 
 
 在注意训练的batch_size需要设置在XS-VIDv2.yaml
+```yaml
 split_batch_dict:
   1: 32
   2: 15 #s1
@@ -97,6 +100,7 @@ split_batch_dict:
   5: 5
   6: 4
   8: 7
+```
 意思是1帧训练时，batch设置为32。2帧时自动设置为15。以此类推。
 
 2. coco数据集
