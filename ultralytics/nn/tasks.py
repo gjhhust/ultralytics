@@ -72,6 +72,9 @@ from ultralytics.nn.modules import (
     DySample,
     MSTFDC,
     MSTFDC_T,
+    MSTF_BLOCK,
+    HyperComputeModule,
+    MANet
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1227,6 +1230,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C1,
             C2,
             C2f,
+            MANet,
             C2f_DCNV3,
             C2f_MDC,
             C2f_DC,
@@ -1264,6 +1268,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 C1,
                 C2,
                 C2f,
+                MANet,
                 C2f_DCNV3,
                 C2f_MDC,
                 C2f_DC,
@@ -1322,7 +1327,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         #     c1 = [ch[f_] for f_ in f]
         #     c2 = c1
         #     args.insert(0, c1)
-        elif m in (MSTF_STREAM_cbam,MSTF_STREAM,MSTFDC,MSTFDC_T):
+        elif m in (MSTF_STREAM_cbam,MSTF_STREAM,MSTFDC,MSTFDC_T,MSTF_BLOCK):
             c1 = [ch[f_] for f_ in f]
             c2 = c1[1:]
             args.insert(0, c1)
@@ -1330,6 +1335,10 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c1 = ch[f]
             c2 = ch[f]
             args.insert(0, c1)
+        elif m is HyperComputeModule:
+            c1, c2 = ch[f], args[0]
+            c2 = make_divisible(min(c2, max_channels) * width, 8)
+            args = [c1, c2, threshold]
         else:
             c2 = ch[f]
 

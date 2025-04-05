@@ -65,7 +65,10 @@ from .block import (
     C2f_ODConv,
     DySample,
     MSTFDC,
-    MSTFDC_T
+    MSTFDC_T,
+    MANet, 
+    HyperComputeModule,
+    MSTF_BLOCK
 )
 from .conv import (
     CBAM,

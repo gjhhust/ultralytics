@@ -7,7 +7,7 @@ import os, json, pickle
 # anno_json = "/data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
 anno_json = "/data/shuzhengwang/datasets/XS-VID/annotations/fix/test.json"
 # anno_json = "/data/jiahaoguo/datasets/gaode_6/annotations/task1_2videos.json"
-pred_json = "/data/shuzhengwang/project/ultralytics/runs/detect/val181/predictions.json"
+pred_json = "/data/shuzhengwang/project/ultralytics/results/[UFPMP-Det] coarse_det.bbox.json"
 
 # 27.8 38.5 34.0 0.5 9.5 53.2 26.3 66.4 43.3
 # 8.9 13.8 9.2 1.0 11.0 19.3 3.2 27.5 27.6
