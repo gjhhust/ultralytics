@@ -466,7 +466,7 @@ class InputData(nn.Module):
     def forward(self, x):
         # Get the number of channels
         if isinstance(x, (list, tuple)):
-            return x
+            return [x[0], x[1][0], x[1][1], x[1][2]]
         else:
-            return [x, [None, None, None]]
+            return [x, None, None, None]
         

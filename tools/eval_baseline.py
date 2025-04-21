@@ -11,7 +11,7 @@ if args.model_type == 'YOLOFT':
     path = args.model_wight
     model = YOLOFT(path)  # load a custom model"
     # model = YOLOFT("config/yoloft_onxx/yoloftS_dcn_dy_s1.yaml").load()
-    divice_id = 2
+    divice_id = 3
 else:
     path = "/data/jiahaoguo/ultralytics_yoloft/ultralytics/runs/xs-vid/hyper-yoloS_best.pt"
     model = YOLO(path)  # load a custom model"

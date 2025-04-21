@@ -69,7 +69,8 @@ from .block import (
     MSTFDC_T,
     MANet, 
     HyperComputeModule,
-    MSTF_BLOCK
+    MSTF_BLOCK,
+    MSTFv1
 )
 from .conv import (
     CBAM,

@@ -198,7 +198,7 @@ class ConvGRU(nn.Module):
         q = torch.tanh(self.convq(torch.cat([r*h, x], dim=1)))
 
         h = (1-z) * h + z * q
-        return h
+        return h.contiguous()
 
 class SepConvGRU(nn.Module):
     def __init__(self, hidden_dim=128, input_dim=192+128):

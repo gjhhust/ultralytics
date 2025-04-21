@@ -75,7 +75,8 @@ from ultralytics.nn.modules import (
     MSTFDC_T,
     MSTF_BLOCK,
     HyperComputeModule,
-    MANet
+    MANet,
+    MSTFv1
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -588,12 +589,16 @@ class VideoDetectionModel(BaseModel):
             (torch.Tensor): The last output of the model.
         """
         y, dt, embeddings = [], [], []  # outputs
+        net = []
         for m in self.model:
             if m.f != -1:  # if not from previous layer
                 x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
             if profile:
                 self._profile_one_layer(m, x, dt)
             x = m(x)  # run
+            if isinstance(m, MSTFv1):
+                net.append(x[1])
+                x = x[0]
             y.append(x if m.i in self.save else None)  # save output
             if visualize:
                 feature_visualization(x, m.type, m.i, save_dir=visualize)
@@ -601,7 +606,7 @@ class VideoDetectionModel(BaseModel):
                 embeddings.append(nn.functional.adaptive_avg_pool2d(x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
                 if m.i == max(embed):
                     return torch.unbind(torch.cat(embeddings, 1), dim=0)
-        return x, [f.permute(0, 2, 3, 1) for f in y[13][3:]] #[None, None, None]  # return output
+        return x, net
     
     @staticmethod
     def _descale_pred(p, flips, scale, img_size, dim=1):
@@ -1360,6 +1365,11 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c1 = [ch[f_] for f_ in f]
             c2 = c1[1:]
             args.insert(0, c1)
+        elif m in (MSTFv1, ):
+            c1 = [ch[f_] for f_ in f]
+            c2 = sum(ch[x] for x in f[:2])
+            args.insert(0, c1)
+            
         elif m is DySample:
             c1 = ch[f]
             c2 = ch[f]

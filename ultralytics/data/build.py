@@ -105,7 +105,7 @@ class StreamSampler(DistributedSampler):
                 while(not is_train):
                     iy += 1
                     index = self.dataset.get_index_from_sub(ix, iy)
-                    is_train = self.dataset.img_video_info[index]["is_train"]
+                    is_train = self.dataset.img_video_info[index]["is_train"] if self.dataset.augment else True
                     if iy + 1 == len(self.dataset.sub_video_splits[ix]): 
                         self.last_next_frame_index[i] = None #Video training complete.
                     else:

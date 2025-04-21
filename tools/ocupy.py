@@ -4,15 +4,17 @@ import signal
 import sys
 
 # 设置要占用的显卡和内存大小
-device_ids = [0,1]
+device_ids = [0,1,2,3]
 memory_size = 15 * 1024 * 1024 * 1024  # 20GB
 
 # 用于存储分配的张量
 allocated_tensors = {}
 
-def allocate_memory(device_id, size):
-    """在指定显卡上分配指定大小的内存"""
-    tensor = torch.randn(size // 4, device=f'cuda:{device_id}')  # 每个float32元素占4字节
+def allocate_memory(device_id, memory_size):
+    if device_id < 0 or device_id >= torch.cuda.device_count():
+        print(f"Invalid device ID: {device_id}. Available device IDs are in range 0 to {torch.cuda.device_count() - 1}.")
+        return None
+    tensor = torch.randn(memory_size // 4, device=f'cuda:{device_id}')  # 每个float32元素占4字节
     return tensor
 
 def release_memory():

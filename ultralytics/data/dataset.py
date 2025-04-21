@@ -340,8 +340,9 @@ class YOLOVideoDataset(BaseDataset_2):
         super().__init__(*args, **kwargs)
         self.match_number = self.data["match_number"]
         self.interval = self.data["interval"]
-        self.split_mode = self.data["split_mode"]
         self.interval_mode = self.data["interval_mode"]
+        self.videos = self.data.get("videos", True)
+        
         
         if dist.is_initialized():
             self.world_size = dist.get_world_size()
@@ -352,10 +353,11 @@ class YOLOVideoDataset(BaseDataset_2):
             
         self.im_frame_matching(self.im_files)
         
-        self.length = self.data["split_length"][-1] if len(self.data["split_length"]) > 1 else self.data["split_length"][0] + 1 #epoch 0保证正常初始化dataset
+        self.length = 1 #epoch 0保证正常初始化dataset
         self.epoch = 0
         self.sub_videos, self.sampler_indices, self.index_mapping_frameinfo  = self.split_sub_videos(self.interval, self.length, self.world_size, is_training = self.augment)
-    
+        self.cnt_use = {}
+        
     def im_frame_matching(self, im_files):
         # Create a dictionary that groups images by video name
         video_image_dict = {}
@@ -364,16 +366,20 @@ class YOLOVideoDataset(BaseDataset_2):
         for i, image_path in enumerate(im_files):
             video_name = os.path.basename(os.path.dirname(image_path))
             image_name = os.path.splitext(os.path.basename(image_path))[0]
-            frame_num_string = image_name.split('_')[-1]  # Assuming the video name is the first part of the filename separated by '_'
-            # Extract numeric parts using regular expressions
-            match = re.search(r'\d+', frame_num_string)
-            digits = match.group()
-            frame_num = int(digits)
             
-            # Group images by video name
-            if video_name not in video_image_dict:
-                video_image_dict[video_name] = []
-            video_image_dict[video_name].append({'img_file': image_path, 'frame_number': frame_num, "index":i, "video_name":video_name})
+            if self.videos:
+                frame_num_string = image_name.split('_')[-1]  # Assuming the video name is the first part of the filename separated by '_'
+                # Extract numeric parts using regular expressions
+                match = re.search(r'\d+', frame_num_string)
+                digits = match.group()
+                frame_num = int(digits)
+                
+                # Group images by video name
+                if video_name not in video_image_dict:
+                    video_image_dict[video_name] = []
+                video_image_dict[video_name].append({'img_file': image_path, 'frame_number': frame_num, "index":i, "video_name":video_name})
+            else:
+                video_image_dict[image_name] = [{'img_file': image_path, 'frame_number': 0, "index":i, "video_name":image_name}]
         
         # Now organize the total video information into self.videos
         for video_name, frames in video_image_dict.items():
@@ -386,6 +392,9 @@ class YOLOVideoDataset(BaseDataset_2):
         return self.videos_info
 
     def split_sub_videos(self, interval, length, gpu_count, is_training=False):
+        if not self.videos:
+            assert self.length == 1, "For single image dataset, split_length should be 1"
+            
         # Split video based on the specified interval_mode
         all_sub_videos = []
 
@@ -677,6 +686,22 @@ class YOLOVideoDataset(BaseDataset_2):
             label['rect_shape'] = np.ceil(np.array(label['resized_shape']) / self.stride + 0.5).astype(int) * self.stride
         return self.update_labels_info(label)    
 
+    def plot_used(self, rank, cnt_use):
+        """Plot the distribution of used frames."""
+        import matplotlib.pyplot as plt
+        # 获取使用次数列表
+        usage_counts = list(cnt_use.values())
+        # 获取元素标识列表
+        elements = list(cnt_use.keys())
+        # 绘制柱状图
+        plt.bar(elements, usage_counts)
+        plt.title("Distribution of used frames")
+        plt.xlabel("Number of times used")
+        plt.ylabel("Number of frames")
+        path = f"/data/shuzhengwang/project/ultralytics/results/used_frames_{rank}.png"
+        plt.savefig(path)
+        print(f"Saved used frames plot to {path}")
+    
     def _get_video_frame_indices(self):
         # Generate indices for each video, where each index represents a frame in the video
         video_frame_indices = []
@@ -848,6 +873,7 @@ class YOLOStreamDataset(BaseDataset_2):
         self.match_number = self.data["match_number"]
         self.interval = self.data["interval"]
         self.split_mode = self.data["split_mode"]
+        self.videos = self.data.get("videos", True)
         self.im_frame_matching(self.im_files)
         self.epoch = 0
         self.length = 1
@@ -1054,23 +1080,33 @@ class YOLOStreamDataset(BaseDataset_2):
         for i,image_path in enumerate(im_files):
             video_name = os.path.basename(os.path.dirname(image_path))
             image_name = os.path.splitext(os.path.basename(image_path))[0]
-            frame_num_string = image_name.split('_')[-1] # Assuming the video name is the first part of the filename separated by '_'
-            # Extract numeric parts using regular expressions
-            match = re.search(r'\d+', frame_num_string)
-            digits = match.group()
-            frame_num = int(digits)
-            # print(f"string: {frame_num_string} -> {frame_num}")
-            
-            if video_name not in video_image_dict:
-                video_image_dict[video_name] = []
-            video_image_dict[video_name].append({
-                "index":i,
-                "frame_number":frame_num
-            })
-            img_video_info.append({
-                "frame_number":frame_num,
-                "video_name":video_name,
-            })
+            if self.videos:
+                frame_num_string = image_name.split('_')[-1] # Assuming the video name is the first part of the filename separated by '_'
+                # Extract numeric parts using regular expressions
+                match = re.search(r'\d+', frame_num_string)
+                digits = match.group()
+                frame_num = int(digits)
+                # print(f"string: {frame_num_string} -> {frame_num}")
+                
+                if video_name not in video_image_dict:
+                    video_image_dict[video_name] = []
+                video_image_dict[video_name].append({
+                    "index":i,
+                    "frame_number":frame_num
+                })
+                img_video_info.append({
+                    "frame_number":frame_num,
+                    "video_name":video_name,
+                })
+            else:
+                video_image_dict[image_name]=[{
+                    "index":i,
+                    "frame_number":0
+                }]
+                img_video_info.append({
+                    "frame_number":0,
+                    "video_name":image_name,
+                })
 
         # Sort each video by frame number
         for key,value in video_image_dict.items():
