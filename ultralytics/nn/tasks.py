@@ -74,7 +74,8 @@ from ultralytics.nn.modules import (
     MSTFDC_T,
     MSTF_BLOCK,
     HyperComputeModule,
-    MANet
+    MANet,
+    MSTFv1
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -93,6 +94,7 @@ from ultralytics.utils.torch_utils import (
     fuse_deconv_and_bn,
     initialize_weights,
     intersect_dicts,
+    intersect_dicts_by_model,
     model_info,
     scale_img,
     time_sync,
@@ -586,12 +588,16 @@ class VideoDetectionModel(BaseModel):
             (torch.Tensor): The last output of the model.
         """
         y, dt, embeddings = [], [], []  # outputs
+        net = []
         for m in self.model:
             if m.f != -1:  # if not from previous layer
                 x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
             if profile:
                 self._profile_one_layer(m, x, dt)
             x = m(x)  # run
+            if isinstance(m, MSTFv1):
+                net.append(x[1])
+                x = x[0]
             y.append(x if m.i in self.save else None)  # save output
             if visualize:
                 feature_visualization(x, m.type, m.i, save_dir=visualize)
@@ -599,7 +605,7 @@ class VideoDetectionModel(BaseModel):
                 embeddings.append(nn.functional.adaptive_avg_pool2d(x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
                 if m.i == max(embed):
                     return torch.unbind(torch.cat(embeddings, 1), dim=0)
-        return x, [f.permute(0, 2, 3, 1) for f in y[13][3:]]  # return output
+        return x, net
     
     @staticmethod
     def _descale_pred(p, flips, scale, img_size, dim=1):
@@ -627,6 +633,22 @@ class VideoDetectionModel(BaseModel):
         """Initialize the loss criterion for the DetectionModel."""
         return E2EDetectLoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
 
+    def load(self, weights, verbose=True):
+        """
+        Load the weights into the model.
+
+        Args:
+            weights (dict | torch.nn.Module): The pre-trained weights to be loaded.
+            verbose (bool, optional): Whether to log the transfer progress. Defaults to True.
+        """
+        model = weights["model"] if isinstance(weights, dict) else weights  # torchvision models are not dicts
+        csd = model.float().state_dict()  # checkpoint state_dict as FP32
+        # csd = intersect_dicts(csd, self.state_dict())  # intersect
+        print("load state dict by model")
+        csd = intersect_dicts_by_model(csd, self.state_dict()) 
+        self.load_state_dict(csd, strict=False)  # load
+        if verbose:
+            LOGGER.info(f"Transferred {len(csd)}/{len(self.model.state_dict())} items from pretrained weights")
 
 class SegmentationVideoModel(VideoDetectionModel):
     """YOLOv8 segmentation model."""
@@ -1195,7 +1217,10 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         if not scale:
             scale = tuple(scales.keys())[0]
             LOGGER.warning(f"WARNING ⚠️ no model scale passed. Assuming scale='{scale}'.")
-        depth, width, max_channels = scales[scale]
+        if len(scales[scale]) == 4:
+            depth, width, max_channels, threshold = scales[scale]
+        else:
+            depth, width, max_channels = scales[scale]
 
     if act:
         Conv.default_act = eval(act)  # redefine default activation, i.e. Conv.default_act = nn.SiLU()
@@ -1331,6 +1356,11 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c1 = [ch[f_] for f_ in f]
             c2 = c1[1:]
             args.insert(0, c1)
+        elif m in (MSTFv1, ):
+            c1 = [ch[f_] for f_ in f]
+            c2 = sum(ch[x] for x in f[:2])
+            args.insert(0, c1)
+            
         elif m is DySample:
             c1 = ch[f]
             c2 = ch[f]

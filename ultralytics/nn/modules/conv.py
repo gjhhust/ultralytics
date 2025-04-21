@@ -179,6 +179,12 @@ class LightConv(nn.Module):
         """Apply 2 convolutions to input tensor."""
         return self.conv2(self.conv1(x))
 
+class GroupConv(Conv):
+    """Depth-wise convolution."""
+
+    def __init__(self, c1, c2, k=1, s=1, d=1, act=True):  # ch_in, ch_out, kernel, stride, dilation, activation
+        super().__init__(c1, c2, k, s, g=math.gcd(c1, c2), d=d, act=act)
+
 
 class DWConv(Conv):
     """Depth-wise convolution."""
@@ -430,7 +436,7 @@ class InputData(nn.Module):
     def forward(self, x):
         # Get the number of channels
         if isinstance(x, (list, tuple)):
-            return x
+            return [x[0], x[1][0], x[1][1], x[1][2]]
         else:
-            return [x, [None, None, None]]
+            return [x, None, None, None]
         

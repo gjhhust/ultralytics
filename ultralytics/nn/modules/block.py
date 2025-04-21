@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
-from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad, DCNV3_conv,ModulatedDeformConv,DeformConv
+from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad, DCNV3_conv,ModulatedDeformConv,DeformConv, GroupConv
 from .transformer import TransformerBlock
 
 __all__ = (
@@ -1655,6 +1655,7 @@ class FDCN(nn.Module):
             self,
             gru,
             channels=64,
+            net_channels=32,
             kernel_size=3,
             dw_kernel_size=None,
             stride=1,
@@ -1703,15 +1704,15 @@ class FDCN(nn.Module):
         self.offset_scale = offset_scale
         self.center_feature_scale = center_feature_scale
         self.gru = gru
-        self.encoder = Conv(channels, channels//3, k=1)
+        self.encoder = Conv(channels, net_channels, k=1)
         self.dw_conv = nn.Sequential(
             nn.Conv2d(
-                channels,
+                net_channels,
                 channels,
                 kernel_size=dw_kernel_size,
                 stride=1,
-                padding=(dw_kernel_size - 1) // 2,
-                groups=channels),
+                padding= autopad(dw_kernel_size, (dw_kernel_size - 1) // 2, 1), 
+                groups=net_channels),
             build_norm_layer(
                 channels,
                 norm_layer,
@@ -1743,11 +1744,11 @@ class FDCN(nn.Module):
     def forward(self, input_x, input_y):
         """
         :param input                       (N, C, H, W)
-        :param input_y                      (N, C, H, W)
+        :param input_y                      (N, C//2, H, W)
         :return output                     (N, C, H, W)
         """
-        input_x_en = self.encoder(input_x)
-        input_y = self.gru(input_y, input_x_en)
+        input_x_en = self.encoder(input_x)  #(N, C//2, H, W)
+        input_y = self.gru(input_y, input_x_en)  #(N, C//2, H, W)
         input = input_x.permute(0, 2, 3, 1) #(N, H, W, C)
         
         N, H, W, _ = input.shape
@@ -1755,7 +1756,7 @@ class FDCN(nn.Module):
         x = self.input_proj(input)
         dtype = x.dtype
 
-        y = self.dw_conv(input_y)
+        y = self.dw_conv(input_y) #(N, C, H, W)
         offset = self.offset(y)
         mask = self.mask(y).reshape(N, H, W, self.group, -1)
         
@@ -1782,7 +1783,7 @@ class FDCN(nn.Module):
                 256)
 
         x = self.output_proj(x)
-        return self.act(x.permute(0, 3, 1, 2)), input_y
+        return self.act(x.permute(0, 3, 1, 2)).contiguous(), input_y.contiguous()
     
 class MSTFDC(nn.Module):
     def __init__(
@@ -1877,7 +1878,43 @@ class MSTF_BLOCK(nn.Module):
             fmaps_old = [fmap.permute(0, 3, 1, 2) for fmap in fmaps_old]
     
         return fmaps_new+fmaps_old
-            
+
+class MSTFv1(nn.Module):
+    def __init__(self, in_channels, dimension=1, mode="concat", width=0.25, depth=0.33):
+        """Concatenates a list of tensors along a specified dimension."""
+        super().__init__()
+        self.d = dimension
+        if mode == "concat":
+            self.forward = self.forward_concat
+        elif mode == "net":
+            in_channel = in_channels[0] + in_channels[1]
+            self.net_dim = int(in_channel*width)
+            assert self.net_dim == in_channels[-1], f"input last feature dims must equal to now feature dims, plase set InputData:[{in_channels[-1]}]->[{self.net_dim}]"
+            self.block = FDCN(ConvGRU(hidden_dim=self.net_dim, input_dim=self.net_dim), 
+                                        in_channel, 
+                                        self.net_dim, 
+                                        kernel_size = 3)
+            self.forward = self.forward_mstf
+        else:
+            raise ValueError("MSTFv1 paramter [mode] must be in [concat, net]")
+
+    def forward_concat(self, x):
+        """Forward pass for the YOLOv8 mask Proto module."""
+        x1, x2, net_x = x
+        return torch.cat([x1,x2], self.d), net_x
+
+    def forward_mstf(self, x):
+        x1, x2, net_x = x
+        input_x = torch.cat([x1,x2], self.d)
+        b, c, h, w = input_x.shape
+        if net_x is None:
+            net_x = torch.zeros([b, self.net_dim, h, w], device=input_x.device, dtype=input_x.dtype)
+
+        x, net = self.block(input_x, net_x)
+        x = x + input_x
+        
+        return x, net
+
 from ultralytics.nn.modules.flow import CorrBlock, AlternateCorrBlock, initialize_flow,SepConvGRU,  ConvGRU, BasicUpdateBlock, SmallNetUpdateBlock,  NetUpdateBlock, SmallUpdateBlock, warp_feature, ConvGRU
 
 class MSTF_FLOW(nn.Module): #

@@ -463,6 +463,33 @@ def intersect_dicts(da, db, exclude=()):
     """Returns a dictionary of intersecting keys with matching shapes, excluding 'exclude' keys, using da values."""
     return {k: v for k, v in da.items() if k in db and all(x not in k for x in exclude) and v.shape == db[k].shape}
 
+def intersect_dicts_by_model(da, db):
+    """Returns a dictionary of intersecting keys with matching shapes, excluding 'exclude' keys, using da values."""
+    group_da = {}
+    new_da = {}
+    for k, da_v in da.items():
+        group_name = ".".join(k.split(".")[:2])
+        model_name = ".".join(k.split(".")[2:])
+        if group_name not in group_da:
+            group_da[group_name] = {}
+        group_da[group_name][model_name] = da_v
+
+    group_db = {}
+    for k, v in db.items():
+        group_name = ".".join(k.split(".")[:2])
+        model_name = ".".join(k.split(".")[2:])
+        if group_name not in group_db:
+            group_db[group_name] = {}
+        group_db[group_name][model_name] = v
+    
+    for group_name_da, state_dict_da in group_da.items():
+        for group_name_db, state_dict_db in group_db.items(): 
+            if len(state_dict_da) == len(state_dict_db) and state_dict_da.keys() == state_dict_db.keys():
+                for model_name, v_da in state_dict_da.items():
+                    v_db = state_dict_db[model_name]
+                    if v_da.shape == v_db.shape:
+                        new_da[group_name_db+"."+model_name] = v_da
+    return new_da
 
 def is_parallel(model):
     """Returns True if model is of type DP or DDP."""
