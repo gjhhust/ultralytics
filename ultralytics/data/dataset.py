@@ -60,9 +60,15 @@ class YOLODataset(BaseDataset):
         self.use_keypoints = task == "pose"
         self.use_obb = task == "obb"
         self.data = data
+        if "interval" in data:
+            interval = data["interval"]
+        else:
+            interval = 1
+            
         assert not (self.use_segments and self.use_keypoints), "Can not use both segments and keypoints."
-        super().__init__(*args, **kwargs)
-
+        super().__init__(interval=interval, *args, **kwargs)
+        
+            
     def cache_labels(self, path=Path("./labels.cache")):
         """
         Cache dataset labels, check images and read shapes.
@@ -179,7 +185,8 @@ class YOLODataset(BaseDataset):
         """Returns dictionary of labels for YOLO training."""
         self.label_files = self.img2label_paths(self.im_files)
         # cache_path = Path(combine_unique_folders([os.path.splitext(p)[0] for p in self.img_path])).with_suffix('.cache')
-        cache_path = Path(self.img_path).with_suffix(".cache")
+        # cache_path = Path(self.img_path).with_suffix(".cache")
+        cache_path = Path(self.im_files[0]).with_suffix(".cache") if isinstance(self.img_path, list) else Path(self.img_path).with_suffix(".cache")
         try:
             cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file
             assert cache["version"] == DATASET_CACHE_VERSION  # matches current version
@@ -550,7 +557,7 @@ class YOLOVideoDataset(BaseDataset_2):
         """Returns dictionary of labels for YOLO training."""
         self.label_files = self.img2label_paths(self.im_files)
         # cache_path = Path(combine_unique_folders([os.path.splitext(p)[0] for p in self.img_path])).with_suffix('.cache')
-        cache_path = Path(self.img_path).with_suffix(".cache")
+        cache_path = Path(self.im_files[0]).with_suffix(".cache") if isinstance(self.img_path, list) else Path(self.img_path).with_suffix(".cache")
         try:
             cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file
             assert cache["version"] == DATASET_CACHE_VERSION  # matches current version
@@ -662,6 +669,7 @@ class YOLOVideoDataset(BaseDataset_2):
                               label['resized_shape'][1] / label['ori_shape'][1])  # for evaluation
 
         label["img_metas"] = dict(frame_info)
+        label["video_name"] = frame_info["video_name"]
 
         label["img_metas"]["is_first"] = frame_info["sub_frame_number"]==0
         
@@ -1183,7 +1191,8 @@ class YOLOStreamDataset(BaseDataset_2):
         """Returns dictionary of labels for YOLO training."""
         self.label_files = self.img2label_paths(self.im_files)
         # cache_path = Path(combine_unique_folders([os.path.splitext(p)[0] for p in self.img_path])).with_suffix('.cache')
-        cache_path = Path(self.img_path).with_suffix(".cache")
+        # cache_path = Path(self.img_path).with_suffix(".cache")
+        cache_path = Path(self.im_files[0]).with_suffix(".cache") if isinstance(self.img_path, list) else Path(self.img_path).with_suffix(".cache")
         try:
             cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file
             assert cache["version"] == DATASET_CACHE_VERSION  # matches current version

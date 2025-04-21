@@ -62,7 +62,8 @@ class BaseDataset(Dataset):
         classes=None,
         fraction=1.0,
         images_dir=None,
-        labels_dir=None
+        labels_dir=None,
+        interval=1,
     ):
         """Initialize BaseDataset with given configuration and options."""
         super().__init__()
@@ -80,6 +81,10 @@ class BaseDataset(Dataset):
             self.labels_dir = labels_dir if isinstance(labels_dir, list) else [labels_dir]
             self.im_files, self.labels_dir, self.images_dir = self.get_img_files_new(self.img_path)
             self.labels = self.get_labels_new()
+            
+            assert len(self.im_files) == len(self.label_files), "Number of images and labels should be equal to the interval."
+            self.im_files = self.im_files[::interval]
+            self.labels = self.labels[::interval]
         
         self.update_labels(include_class=classes)  # single_cls and include_class
         self.ni = len(self.labels)  # number of images

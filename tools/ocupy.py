@@ -4,7 +4,7 @@ import signal
 import sys
 
 # 设置要占用的显卡和内存大小
-device_ids = [2,3]
+device_ids = [0,1]
 memory_size = 15 * 1024 * 1024 * 1024  # 20GB
 
 # 用于存储分配的张量
@@ -48,4 +48,4 @@ if __name__ == "__main__":
             result = torch.matmul(matrix, matrix)
             del matrix, result  # 删除不再需要的变量
             torch.cuda.empty_cache() # 清空CUDA缓存
-        time.sleep(0.1)  # 减少循环间隔，提高GPU利用率
+        time.sleep(0.01)  # 减少循环间隔，提高GPU利用率

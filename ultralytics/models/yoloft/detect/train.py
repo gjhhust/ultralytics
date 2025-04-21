@@ -243,10 +243,10 @@ class DetectionTrainer(BaseTrainer):
                 self.loss_step = self.train_loader.dataset.length
             else:
                 self.loss_step = 1
-                
+            
+            nb = len(self.train_loader) 
             if RANK in {-1, 0}:
                 LOGGER.info(self.progress_string())
-                nb = len(self.train_loader) 
                 pbar = TQDM(enumerate(self.train_loader), total=nb)
             self.tloss = None
             # change new____________________

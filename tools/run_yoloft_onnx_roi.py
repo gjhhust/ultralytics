@@ -206,7 +206,7 @@ def postprocess(preds, conf=0.001, iou=0.7, single_cls=False, agnostic_nms=False
     )
 
 class CocoEvaluators:
-    def __init__(self, eval_ann_json="/data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.json", 
+    def __init__(self, eval_ann_json="/data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.json", 
                  class_map = [0,1],#将模型预测的分类映射为 index: value，这里相当于没有映射
                  nc=2,
                  image_dir = None,
@@ -472,8 +472,8 @@ def run_model(session, input, augment=False):
     return (pred, (fmap2, fmap1, fmap0))
 
 
-json_path = "/data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
-images_dir = "/data/jiahaoguo/datasets/gaode_6/images"
+json_path = "/data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
+images_dir = "/data/jiahaoguo/dataset/gaode_6/images"
 onnx_model_path = "/data/shuzhengwang/project/ultralytics/runs/save/train201_DCN_32.9/weights/last.onnx"
 imagz = 896
 
@@ -490,11 +490,11 @@ model = core.read_model(model=onnx_model_path)
 compiled_model = core.compile_model(model=model, device_name="CPU")  # 可以将 "CPU" 替换为 "GPU" 以使用 GPU 加速
 
 buffer = StreamBuffer_onnx() # 保存特征图缓冲区
-coco_evaluator = CocoEvaluators(eval_ann_json="/data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.json", 
+coco_evaluator = CocoEvaluators(eval_ann_json="/data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.json", 
                          class_map = [0,1],#将模型预测的分类映射为 index: value，这里相当于没有映射
                          nc=2,
                          show=True,
-                         image_dir="/data/jiahaoguo/datasets/gaode_6/images/",
+                         image_dir="/data/jiahaoguo/dataset/gaode_6/images/",
                          save_dir="/data/shuzhengwang/project/ultralytics/results/shows")
 
 # 新增变量用于保存历史检测框

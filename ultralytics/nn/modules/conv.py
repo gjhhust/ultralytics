@@ -162,6 +162,36 @@ class Conv2(Conv):
         self.forward = self.forward_fuse
 
 
+class PartialConv(nn.Module):
+
+    def __init__(self, dim, n_div=4, forward="split_cat"):
+        super().__init__()
+        self.dim_conv3 = dim // n_div
+        self.dim_untouched = dim - self.dim_conv3
+        self.partial_conv3 = nn.Conv2d(self.dim_conv3, self.dim_conv3, 3, 1, autopad(3, 1, 1), bias=False)
+
+        if forward == 'slicing':
+            self.forward = self.forward_slicing
+        elif forward == 'split_cat':
+            self.forward = self.forward_split_cat
+        else:
+            raise NotImplementedError
+
+    def forward_slicing(self, x):
+        # only for inference
+        x = x.clone()   # !!! Keep the original input intact for the residual connection later
+        x[:, :self.dim_conv3, :, :] = self.partial_conv3(x[:, :self.dim_conv3, :, :])
+
+        return x
+
+    def forward_split_cat(self, x):
+        # for training/inference
+        x1, x2 = torch.split(x, [self.dim_conv3, self.dim_untouched], dim=1)
+        x1 = self.partial_conv3(x1)
+        x = torch.cat((x1, x2), 1)
+
+        return x
+
 class LightConv(nn.Module):
     """
     Light convolution with args(ch_in, ch_out, kernel).
@@ -178,6 +208,12 @@ class LightConv(nn.Module):
     def forward(self, x):
         """Apply 2 convolutions to input tensor."""
         return self.conv2(self.conv1(x))
+
+class GroupConv(Conv):
+    """Depth-wise convolution."""
+
+    def __init__(self, c1, c2, k=1, s=1, d=1, act=True):  # ch_in, ch_out, kernel, stride, dilation, activation
+        super().__init__(c1, c2, k, s, g=math.gcd(c1, c2), d=d, act=act)
 
 
 class DWConv(Conv):

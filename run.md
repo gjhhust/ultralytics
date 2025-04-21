@@ -43,11 +43,11 @@ gt_bboxes shape: torch.Size([20, 3031, 4])
 
 python tools/run_yoloft_onnx.py --onnx_model_path /data/shuzhengwang/project/ultralytics/runs/save/train230_yolo_dydcn_notall_newdata/weights/best.onnx \
                               --model_type yolo \
-                              --json_path /data/jiahaoguo/datasets/gaode_6/annotations/task1_2videos.json  \
+                              --json_path /data/jiahaoguo/dataset/gaode_6/annotations/task1_2videos.json  \
                               --pred_json /data/shuzhengwang/project/ultralytics/runs/save/train230_yolo_dydcn_notall_newdata/task1_2videos_pred.json 
 
 
 python tools/run_yoloft_onnx.py --onnx_model_path /data/shuzhengwang/project/ultralytics/runs/save/train230_yoloft_dydcn_notall_newdata/weights/best.onnx \
                               --model_type yoloft \
-                              --json_path /data/jiahaoguo/datasets/gaode_6/annotations/task1_2videos.json  \
+                              --json_path /data/jiahaoguo/dataset/gaode_6/annotations/task1_2videos.json  \
                               --pred_json /data/shuzhengwang/project/ultralytics/runs/save/train227_yoloft_dydcn_newdata/onnx_test/task1_2videos_pred.json 

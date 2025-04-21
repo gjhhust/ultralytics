@@ -473,8 +473,8 @@ def load_inference_source(source=None, batch=1, vid_stride=1, buffer=False):
     elif screenshot:
         dataset = LoadScreenshots(source)
     elif from_img and buffer:
-        # dataset = LoadPilAndNumpy(source)
-        AttributeError("error, img buffer have not achieve")
+        dataset = LoadPilAndNumpy(source[0], source[1])
+        # AttributeError("error, img buffer have not achieve")
     elif from_img:
         dataset = LoadPilAndNumpy(source)
     else:

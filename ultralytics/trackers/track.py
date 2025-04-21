@@ -63,7 +63,10 @@ def on_predict_postprocess_end(predictor: object, persist: bool = False) -> None
         >>> predictor = YourPredictorClass()
         >>> on_predict_postprocess_end(predictor, persist=True)
     """
-    path, im0s = predictor.batch[:2]
+    if predictor.dataset.source_type.buffer:
+        path, (im0s, buffer) = predictor.batch[:2]
+    else:
+        path, im0s = predictor.batch[:2]
 
     is_obb = predictor.args.task == "obb"
     is_stream = predictor.dataset.mode == "stream"

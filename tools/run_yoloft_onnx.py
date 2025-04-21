@@ -327,13 +327,30 @@ class CocoVIDDataset(Dataset):
         super(CocoVIDDataset, self).__init__()
         self.imagz = imagz
         self.images_dir = images_dir
-        with open(json_path, 'r') as f:
-            coco_data = json.load(f)
+        if json_path:
+            with open(json_path, 'r') as f:
+                coco_data = json.load(f)
+            # 提取图片信息
+            self.image_info = coco_data['images']
+            self.image_info.sort(key=lambda x: (x['video_id'], x['frame_id']))  # 按video_id和frame_id排序
+        else:
+            print("Warning: No json file provided, only image files will be used")
+            # 遍历images_dir获取video_name/frames.jpg信息
+            self.image_info = []
+            for video_name in os.listdir(images_dir):
+                video_dir = os.path.join(images_dir, video_name)
+                # 获取video_dir下的jpg图片并排序，00000.jpg、00001.jpg、...
+                frames = sorted(os.listdir(video_dir))
+                for i, frame in enumerate(frames):
+                    if frame.endswith('.jpg'):
+                        # frame_id = int(frame.split('.')[0])
+                        self.image_info.append({
+                            'video_id': video_name,
+                            'frame_id': i,
+                            'file_name': os.path.join(video_name, frame)
+                        })
+            
         
-        # 提取图片信息
-        self.image_info = coco_data['images']
-        self.image_info.sort(key=lambda x: (x['video_id'], x['frame_id']))  # 按video_id和frame_id排序
-
     def __len__(self) -> int:
         return len(self.image_info)
 
@@ -375,6 +392,7 @@ class CocoVIDDataset(Dataset):
         
         return img_np, file_name, frame_id, {
             'file_name': file_name,
+            "video_name": video_id,
             'orig_w': orig_w,
             'orig_h': orig_h,
             'new_w': new_w,
@@ -396,6 +414,7 @@ class CocoVIDDataset(Dataset):
         img_np = img_np.squeeze(0)  # [1, C, H, W] -> [C, H, W]
         img_np = np.transpose(img_np, (1, 2, 0))  # CHW -> HWC
         img_np = img_np[paste_y:paste_y+new_h, paste_x:paste_x+new_w, :]
+        img_np = cv2.resize(img_np, (orig_w, orig_h))
         img_np = (img_np * 255).astype(np.uint8)
         img = Image.fromarray(img_np)
         
@@ -424,9 +443,9 @@ class CocoVIDDataset(Dataset):
                 
                 # 将xyxy转换为xywh
                 orig_bbox[i] = [x1, y1, x2-x1, y2-y1]
-            return img, (orig_w, orig_h), orig_bbox
+            return img_np, (orig_w, orig_h), orig_bbox
         else:
-            return img, (orig_w, orig_h), None
+            return img_np, (orig_w, orig_h), None
 
 def custom_collate(batch):
     img_nps = []
@@ -457,7 +476,7 @@ def postprocess(preds, conf=0.001, iou=0.7, single_cls=False, agnostic_nms=False
     )
 
 class CocoEvaluators:
-    def __init__(self, eval_ann_json="/data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.json", 
+    def __init__(self, eval_ann_json="/data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.json", 
                  class_map = [0,1],#将模型预测的分类映射为 index: value，这里相当于没有映射
                  nc=2):
         """Initialize evaluation metrics for YOLO."""
@@ -632,12 +651,18 @@ def run_model(session, input, augment=False):
 
 import argparse
 parser = argparse.ArgumentParser()
-parser.add_argument("--onnx_model_path", type=str, default="runs/save/train227_yoloft_dydcn_newdata/weights/best.onnx")
+parser.add_argument("--onnx_model_path", type=str, default="runs/save/train107_yoloftS_dcn_dy_s3_t_gaode5&6_ramdominfaraed_e28_56/weights/best.onnx")
 parser.add_argument("--model_type", type=str, default='yoloft')
-parser.add_argument("--json_path", type=str, default='/data/jiahaoguo/datasets/gaode_6/annotations/task1_2videos.json')
-parser.add_argument("--images_dir", type=str, default="/data/jiahaoguo/datasets/gaode_6/images")
+parser.add_argument("--json_path", type=str, default='')
+parser.add_argument("--images_dir", type=str, default="/data/jiahaoguo/dataset/gaode_6/true_videos/")
 parser.add_argument("--imagz", type=int, default=896)
 parser.add_argument("--pred_json", type=str, default="results.json")
+
+parser.add_argument("--show", type=bool, default=True) #when show, will not eval and save pred_json
+parser.add_argument("--show_dir", type=str, default="/data/jiahaoguo/dataset/gaode_6/show_dir_4/") #when show, will save show_dir
+parser.add_argument("--conf", type=float, default=0.4) #when eval conf=0..1, pred 0.25
+parser.add_argument("--iou", type=float, default=0.7) #iou threshold when eval 0.5, pred 0.2
+
 parser.add_argument("--save_fmaps", type=bool, default=False) #保存推理过程中的fmaps，用于int8量化过程中校准数据
 args = parser.parse_args()
 
@@ -648,9 +673,10 @@ imagz = args.imagz
 
 print("model_test: ", args.onnx_model_path)
 print("json_path: ", args.json_path)
-print("pred_json: ", args.pred_json)
-os.makedirs(os.path.dirname(args.pred_json), exist_ok=True)
-print(f"pred json will save in {os.path.dirname(args.pred_json)}")
+if not args.show:
+    print("pred_json: ", args.pred_json)
+    os.makedirs(os.path.dirname(args.pred_json), exist_ok=True)
+    print(f"pred json will save in {os.path.dirname(args.pred_json)}")
 
 dataset = CocoVIDDataset(json_path, images_dir, imagz=imagz) # 加载数据集
 dataloader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=custom_collate)
@@ -662,10 +688,28 @@ core = Core()
 model = core.read_model(model=onnx_model_path)
 compiled_model = core.compile_model(model=model, device_name="CPU")
 
-coco_evaluator = CocoEvaluators(eval_ann_json=args.json_path, 
-                         class_map = [0,1],#将模型预测的分类映射为 index: value，这里相当于没有映射
-                         nc=2)
-
+if not args.show:
+    coco_evaluator = CocoEvaluators(eval_ann_json=args.json_path, 
+                            class_map = [0,1],#将模型预测的分类映射为 index: value，这里相当于没有映射
+                            nc=2)
+else:
+    video_write = None
+    # cls_id映射调色盘,低饱和度多种颜色
+    color_maps = [
+            
+            (128, 128, 0),    # 橄榄色
+            (128, 0, 0),      # 深红
+            (0, 128, 0),      # 深绿
+            (0, 0, 128),      # 深蓝
+            (128, 128, 128),  # 灰色
+            (128, 0, 128),    # 紫色
+            (0, 128, 128),    # 青色
+            (64, 64, 64),     # 深灰
+            (192, 192, 192),  # 浅灰
+            (64, 0, 0),       # 深棕
+            (0, 64, 0),       # 深绿
+            (0, 0, 64),       # 深蓝
+        ]
 
 save_fmaps_orige = [
             np.zeros([1, imagz//8, imagz//8, 104], dtype=np.float32), 
@@ -713,11 +757,43 @@ for i, batch in enumerate(tqdm(dataloader, total=len(dataloader))):
         AssertionError("model typr must in [yolo yoloft]")
 
     # save_fmaps = [np.transpose(f, (0, 3, 1, 2)) for f in save_fmaps]
-    preds = [pred.numpy() for pred in postprocess(torch.from_numpy(preds[0]), conf=0.001)]  # val 0.001, pred 0.25
+    preds = [pred.numpy() for pred in postprocess(torch.from_numpy(preds[0]), conf=args.conf, iou=args.iou)]  # val 0.001, pred 0.25
 
     for pred in preds:
         img_orige, (orig_w, orig_h), pred[:, :4] = dataset.get_original_image_and_bbox(img_np, transform_infos[0], pred[:, :4])
-    coco_evaluator.update_metrics(preds, file_names)
+        
+    if args.show:
+        if frame_ids[0] == 0:
+            if video_write is not None:
+                video_write.release()
+                
+            video_name = transform_infos[0]["video_name"]
+            os.makedirs(args.show_dir, exist_ok=True)
+            video_write = cv2.VideoWriter(os.path.join(args.show_dir, f"{video_name}.mp4"), cv2.VideoWriter_fourcc(*'mp4v'), 5, (orig_w, orig_h))
+            print(f"video_write: {os.path.join(args.show_dir, f'{video_name}.mp4')}")
+            
+        for predn in preds:
+            box = predn[:, :4]# xywh
+            for p, b in zip(predn.tolist(), box.tolist()):
+                x1, y1, w, h = [int(x) for x in b]
+                x2, y2 = x1+w, y1+h
+                score = round(p[4], 2)
+                cls_id = int(p[5])
+                cv2.rectangle(img_orige, (x1, y1), (x2, y2), color_maps[cls_id], 2)
+                # 调整文本位置以适应特别小的目标框
+                # 类别ID
+                scale = 0.35
+                (text_width, text_height), _ = cv2.getTextSize(str(cls_id), cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
+                cv2.putText(img_orige, str(cls_id), (max(x1-text_width, 5), max(y1, 5)), cv2.FONT_HERSHEY_SIMPLEX, scale, color_maps[cls_id], 1)
+                # 得分
+                (text_width, text_height), _ = cv2.getTextSize(str(score), cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
+                cv2.putText(img_orige, str(score), (max(x2, 5), max(y1, 5)), cv2.FONT_HERSHEY_SIMPLEX, scale, color_maps[cls_id], 1)
+                
+        # os.makedirs(os.path.join(args.show_dir, video_name), exist_ok=True)
+        # cv2.imwrite(os.path.join(args.show_dir, video_name, f"{frame_ids[0]:06d}.jpg"), img_orige)
+        video_write.write(img_orige)
+    else:
+        coco_evaluator.update_metrics(preds, file_names)
 
 coco_evaluator.save_json(args.pred_json)
 

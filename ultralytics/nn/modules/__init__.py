@@ -63,6 +63,7 @@ from .block import (
     MSTF_STREAM,
     MSTF_STREAM_cbam,
     C2f_ODConv,
+    C2f_light,
     DySample,
     MSTFDC,
     MSTFDC_T,

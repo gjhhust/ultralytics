@@ -1472,6 +1472,95 @@ class RandomFlip:
         return labels
 
 
+class RandomInfraredFlip:
+    """
+    Applies a random infrared image black - white flip to an image with a given probability for specific video IDs.
+
+    This class performs random infrared image flipping and updates corresponding instance annotations such as
+    bounding boxes and keypoints.
+
+    Attributes:
+        p (float): Probability of applying the flip. Must be between 0 and 1.
+        infrared_videos (list): List of video IDs for which the flip can be applied.
+
+    Methods:
+        __call__: Applies the random infrared flip transformation to an image and its annotations.
+
+    Examples:
+        >>> transform = RandomInfraredFlip(p=0.5, infrared_videos=[0, 1, 2])
+        >>> result = transform({"img": image, "instances": instances, "video_id": 1})
+        >>> flipped_image = result["img"]
+        >>> flipped_instances = result["instances"]
+    """
+
+    def __init__(self, p=0.5, infrared_videos=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 29, 30, 31, 32, 33, 34, 35, 36, 46, 48, 63, 64, 65, 66,
+                                               67, 68, 69, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 96, 113, 114, 115, 116, 117, 118, 123, 124,
+                                               125, 126, 127, 133, 134, 135, 137, 138, 139, 140, 141, 142, 143, 146, 148, 149, 150, 151, 152, 153, 154, 159,
+                                               169, 170, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 187, 188, 189, 190, 191, 192,
+                                               193, 204, 205, 209, 210, 211, 212, 213, 218, 219, 220, 221, 222, 227, 228, 229, 230, 231, 236, 237, 238, 239, 244,
+                                               245, 246, 247, 248, 249, 250, 251, 252, 253, 255, 256]) -> None:
+        """
+        Initializes the RandomInfraredFlip class with probability and video IDs.
+
+        This class applies a random infrared image black - white flip to an image with a given probability
+        for specific video IDs. It also updates any instances (bounding boxes, keypoints, etc.) accordingly.
+
+        Args:
+            p (float): The probability of applying the flip. Must be between 0 and 1.
+            infrared_videos (list): List of video IDs for which the flip can be applied.
+
+        Raises:
+            AssertionError: If p is not between 0 and 1.
+
+        Examples:
+            >>> flip = RandomInfraredFlip(p=0.5, infrared_videos=[0, 1, 2])
+        """
+        assert 0 <= p <= 1.0, f"The probability should be in range [0, 1], but got {p}."
+
+        self.p = p
+        self.infrared_videos = [str(i) for i in infrared_videos]
+        LOGGER.info(f"RandomInfraredFlip: p = {self.p}")
+
+    def __call__(self, labels):
+        """
+        Applies random infrared flip to an image and updates any instances like bounding boxes or keypoints accordingly.
+
+        This method randomly flips the input image's black and white colors for specific video IDs
+        based on the initialized probability. It also updates the corresponding instances (bounding boxes, keypoints) to
+        match the flipped image.
+
+        Args:
+            labels (Dict): A dictionary containing the following keys:
+                'img' (numpy.ndarray): The image to be flipped.
+                'instances' (ultralytics.utils.instance.Instances): An object containing bounding boxes and
+                    optionally keypoints.
+                'video_id' (int): The ID of the video the image belongs to.
+
+        Returns:
+            (Dict): The same dictionary with the flipped image and updated instances:
+                'img' (numpy.ndarray): The flipped image.
+                'instances' (ultralytics.utils.instance.Instances): Updated instances matching the flipped image.
+
+        Examples:
+            >>> labels = {"img": np.random.rand(640, 640, 3), "instances": Instances(...), "video_id": 1}
+            >>> random_flip = RandomInfraredFlip(p=0.5, infrared_videos=[0, 1, 2])
+            >>> flipped_labels = random_flip(labels)
+        """
+        
+    
+        if "video_name" in labels:
+            video_name = labels.pop("video_name")
+        else:
+            return labels
+        
+        img = labels["img"]
+        
+        if video_name in self.infrared_videos and random.random() < self.p:
+            img = 255 - img
+
+        labels["img"] = np.ascontiguousarray(img)
+        return labels
+
 class LetterBox:
     """
     Resize image and padding for detection, instance segmentation, pose.
@@ -2303,6 +2392,7 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
         pre_transform=None if stretch else LetterBox(new_shape=(imgsz, imgsz)),
     )
 
+    # pre_transform = Compose([RandomInfraredFlip(p=0.5), mosaic, affine])
     pre_transform = Compose([mosaic, affine])
     if hyp.copy_paste_mode == "flip":
         pre_transform.insert(1, CopyPaste(p=hyp.copy_paste, mode=hyp.copy_paste_mode))

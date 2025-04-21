@@ -476,13 +476,15 @@ class LoadPilAndNumpy:
         Loaded 2 images
     """
 
-    def __init__(self, im0):
+    def __init__(self, im0, buffer=None):
         """Initializes a loader for PIL and Numpy images, converting inputs to a standardized format."""
         if not isinstance(im0, list):
             im0 = [im0]
         # use `image{i}.jpg` when Image.filename returns an empty path.
         self.paths = [getattr(im, "filename", "") or f"image{i}.jpg" for i, im in enumerate(im0)]
         self.im0 = [self._single_check(im) for im in im0]
+        if buffer:
+            self.buffer = buffer
         self.mode = "image"
         self.bs = len(self.im0)
 
@@ -506,7 +508,11 @@ class LoadPilAndNumpy:
         if self.count == 1:  # loop only once as it's batch inference
             raise StopIteration
         self.count += 1
-        return self.paths, self.im0, [""] * self.bs
+        
+        if getattr(self, "buffer", None):
+            return self.paths, (self.im0, self.buffer), [""] * self.bs
+        else:
+            return self.paths, self.im0, [""] * self.bs
 
     def __iter__(self):
         """Iterates through PIL/numpy images, yielding paths, raw images, and metadata for processing."""

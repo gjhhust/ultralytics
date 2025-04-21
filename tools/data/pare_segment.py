@@ -67,7 +67,7 @@ def xywh2xyxy(bboxes: torch.Tensor) -> torch.Tensor:
 def auto_annotate(
     images_dir,
     ann_file,
-    sam_model="sam_b.pt",
+    sam_model="sam2.1_b.pt",
     device="",
     output_dir=None,
     show = False
@@ -110,6 +110,8 @@ def auto_annotate(
     for ann in anno_data["annotations"]:
         det_results[ann["video_id"]][ann["frame_id"]].append(ann)
 
+    # annotations = []
+    
     for video_id, current_det_results in tqdm(det_results.items(),total=len(det_results), desc=f"Annotating videos"):
         video_name = name_to_id[video_id]
         video_dir = os.path.join(images_dir, video_name)
@@ -149,104 +151,24 @@ def auto_annotate(
                             continue
                         segment = map(str, segments[i].reshape(-1).tolist())
                         f.write(f"{class_ids[i]} " + " ".join(segment) + "\n")
+                        anno_data["annotations"][result[i]["id"]]["segment"] = segments[i].reshape(-1).tolist()
+                        # ann_ = result[i].copy()
+                        assert anno_data["annotations"][result[i]["id"]]["bbox"] == result[i]["bbox"]
+                        # ann_["segment"] = segments[i].reshape(-1).tolist()
+                        # annotations.append(ann_)
         if show:
             video_writer.release()
+    # ann名字加后缀 segment
+    dir, prafix = os.path.split(ann_file)
+    name, ext = os.path.splitext(prafix)
+    new_ann_path = os.path.join(dir, f"{name}_segment{ext}")
+    print(f"Save annotations to {new_ann_path}")
+    with open(new_ann_path, "w") as f:
+        json.dump(anno_data, f, indent=2)
 
-
-def auto_annotate_by_model(
-    images_dir,
-    ann_file=None,
-    sam_model="sam_b.pt",
-    device="",
-    output_dir=None,
-    show=False,
-):
-    """
-    Automatically annotates images using a YOLO object detection model and a SAM segmentation model.
-
-    This function processes images in a specified directory, detects objects using a YOLO model, and then generates
-    segmentation masks using a SAM model. The resulting annotations are saved as text files.
-
-    Args:
-        data (str): Path to a folder containing images to be annotated.
-        det_model (str): Path or name of the pre-trained YOLO detection model.
-        sam_model (str): Path or name of the pre-trained SAM segmentation model.
-        device (str): Device to run the models on (e.g., 'cpu', 'cuda', '0').
-        conf (float): Confidence threshold for detection model; default is 0.25.
-        iou (float): IoU threshold for filtering overlapping boxes in detection results; default is 0.45.
-        imgsz (int): Input image resize dimension; default is 640.
-        max_det (int): Limits detections per image to control outputs in dense scenes.
-        classes (list): Filters predictions to specified class IDs, returning only relevant detections.
-        output_dir (str | None): Directory to save the annotated results. If None, a default directory is created.
-
-    Examples:
-        >>> from ultralytics.data.annotator import auto_annotate
-        >>> auto_annotate(data="ultralytics/assets", det_model="yolo11n.pt", sam_model="mobile_sam.pt")
-
-    Notes:
-        - The function creates a new directory for output if not specified.
-        - Annotation results are saved as text files with the same names as the input images.
-        - Each line in the output text file represents a detected object with its class ID and segmentation points.
-    """
-    det_model = "runs/detect/train343/weights/best.pt"
-    imgsz=1024
-    conf=0.25
-    iou=0.45
-    max_det=300
-    classes = None
-
-    det_model = YOLO(det_model)
-    sam_model = SAM(sam_model)
-
-    # 方法1：使用os.listdir+os.path.isdir
-    for item in tqdm(os.listdir(images_dir), total=294):
-        full_path = os.path.join(images_dir, item)
-        video_output_dir = os.path.join(output_dir, item)
-
-        if show:
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # MP4编码器
-            video_writer = cv2.VideoWriter(
-                filename=os.path.join(output_dir, f"{item}.mp4"),
-                fourcc=fourcc,
-                fps=25,
-                frameSize=(1024,1024),
+auto_annotate("/data/jiahaoguo/dataset/XS-VIDv2/images", 
+              ann_file="/data/jiahaoguo/dataset/XS-VIDv2/annotations/jsonv2/train.json", 
+              output_dir = "/data/jiahaoguo/dataset/XS-VIDv2/annotations/segment_yolox/", 
+              show=False,
+              sam_model="sam2.1_b.pt",
             )
-    
-        data = Path(full_path)
-        if not video_output_dir:
-            video_output_dir = data.parent / f"{data.stem}_auto_annotate_labels"
-        Path(video_output_dir).mkdir(exist_ok=True, parents=True)
-
-        det_results = det_model(
-            data, stream=True, device=device, conf=conf, iou=iou, imgsz=imgsz, max_det=max_det, classes=classes
-        )
-
-        for result in det_results:
-            class_ids = result.boxes.cls.int().tolist()  # noqa
-            if len(class_ids):
-                boxes = result.boxes.xyxy  # Boxes object for bbox outputs
-                sam_results = sam_model(result.orig_img, bboxes=boxes, verbose=False, save=False, device=device)
-
-                if show:
-                    _, im = sam_results[0].save(filename="result.jpg")
-                    video_writer.write(im)
-                segments = sam_results[0].masks.xyn  # noqa
-
-                with open(f"{Path(video_output_dir) / Path(result.path).stem}.txt", "w") as f:
-                    for i in range(len(segments)):
-                        s = segments[i]
-                        if len(s) == 0:
-                            continue
-                        segment = map(str, segments[i].reshape(-1).tolist())
-                        f.write(f"{class_ids[i]} " + " ".join(segment) + "\n")
-        if show:
-            video_writer.release()
-
-# auto_annotate("/data/shuzhengwang/datasets/XS-VID/images", 
-#               ann_file="/data/shuzhengwang/datasets/XS-VID/annotations/fix/train.json", 
-#               output_dir = "/data/shuzhengwang/datasets/XS-VID/annotations/segment_yolox/", show=True)
-auto_annotate_by_model("/data/shuzhengwang/datasets/XS-VID/images", 
-              ann_file="/data/shuzhengwang/datasets/XS-VID/annotations/fix/train.json", 
-              output_dir = "/data/shuzhengwang/datasets/XS-VID/annotations/segment_yolox_model/",
-              sam_model="sam2_b.pt",
-              show=True)

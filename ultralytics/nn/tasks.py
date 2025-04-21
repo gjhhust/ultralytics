@@ -19,6 +19,7 @@ from ultralytics.nn.modules import (
     C2f_DCNV3,
     C2f_MDC,
     C2f_DC,
+    C2f_light,
     C3TR,
     ELAN1,
     OBB,
@@ -93,6 +94,7 @@ from ultralytics.utils.torch_utils import (
     fuse_deconv_and_bn,
     initialize_weights,
     intersect_dicts,
+    intersect_dicts_by_model,
     model_info,
     scale_img,
     time_sync,
@@ -599,7 +601,7 @@ class VideoDetectionModel(BaseModel):
                 embeddings.append(nn.functional.adaptive_avg_pool2d(x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
                 if m.i == max(embed):
                     return torch.unbind(torch.cat(embeddings, 1), dim=0)
-        return x, [f.permute(0, 2, 3, 1) for f in y[13][3:]]  # return output
+        return x, [f.permute(0, 2, 3, 1) for f in y[13][3:]] #[None, None, None]  # return output
     
     @staticmethod
     def _descale_pred(p, flips, scale, img_size, dim=1):
@@ -627,6 +629,28 @@ class VideoDetectionModel(BaseModel):
         """Initialize the loss criterion for the DetectionModel."""
         return E2EDetectLoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
 
+    def load(self, weights, verbose=True):
+        """
+        Load the weights into the model.
+
+        Args:
+            weights (dict | torch.nn.Module): The pre-trained weights to be loaded.
+            verbose (bool, optional): Whether to log the transfer progress. Defaults to True.
+        """
+        model = weights["model"] if isinstance(weights, dict) else weights  # torchvision models are not dicts
+        csd = model.float().state_dict()  # checkpoint state_dict as FP32
+        csd_1 = intersect_dicts(csd, self.state_dict())  # intersect
+        csd_2 = intersect_dicts_by_model(csd, self.state_dict()) 
+        if len(csd_1) >= len(csd_2):
+            csd = csd_1
+            LOGGER.info(f"orige load more weight")
+        elif len(csd_2) > len(csd_1):
+            csd = csd_2
+            LOGGER.info(f"model method load more weight")
+            
+        self.load_state_dict(csd, strict=False)  # load
+        if verbose:
+            LOGGER.info(f"Transferred {len(csd)}/{len(self.model.state_dict())} items from pretrained weights")
 
 class SegmentationVideoModel(VideoDetectionModel):
     """YOLOv8 segmentation model."""
@@ -1195,7 +1219,10 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         if not scale:
             scale = tuple(scales.keys())[0]
             LOGGER.warning(f"WARNING ⚠️ no model scale passed. Assuming scale='{scale}'.")
-        depth, width, max_channels = scales[scale]
+        if len(scales[scale]) == 4:
+            depth, width, max_channels, threshold = scales[scale]
+        else:
+            depth, width, max_channels = scales[scale]
 
     if act:
         Conv.default_act = eval(act)  # redefine default activation, i.e. Conv.default_act = nn.SiLU()
@@ -1232,6 +1259,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C2f,
             MANet,
             C2f_DCNV3,
+            C2f_light,
             C2f_MDC,
             C2f_DC,
             C2f_ODConv,
@@ -1270,6 +1298,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 C2f,
                 MANet,
                 C2f_DCNV3,
+                C2f_light,
                 C2f_MDC,
                 C2f_DC,
                 C2f_ODConv,

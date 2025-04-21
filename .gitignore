@@ -177,3 +177,4 @@ ultralytics/data/datasets
 *.zip
 !pretrain/*/*.pt
 test.jpg
+results/

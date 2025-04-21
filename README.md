@@ -28,7 +28,7 @@ We have released several annotation formats to facilitate subsequent research an
 ## 🛠️ Install
 This repository is build on **[Ultralytics](https://github.com/ultralytics/ultralytics) 8.0.143**  which can be installed by running the following scripts. Please ensure that all dependencies have been satisfied before setting up the environment.
 ```
-scp -r -P 2026 /data/jiahaoguo/datasets/gaode_6/annotations/yolo/gaode_6_rm198_exclude14569*  jiahaoguo@115.156.158.8:/data/jiahaoguo/dataset/gaode_6/annotations/yolo/
+scp -r -P 2026 /data/jiahaoguo/dataset/gaode_6/annotations/yolo/gaode_6_rm198_exclude14569*  jiahaoguo@115.156.158.8:/data/jiahaoguo/dataset/gaode_6/annotations/yolo/
 
 
 conda create --name yoloft python=3.10
