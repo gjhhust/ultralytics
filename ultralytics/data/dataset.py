@@ -60,7 +60,7 @@ class YOLODataset(BaseDataset):
         self.use_keypoints = task == "pose"
         self.use_obb = task == "obb"
         self.data = data
-        if "interval" in data:
+        if "interval" in data and kwargs["augment"]:
             interval = data["interval"]
         else:
             interval = 1

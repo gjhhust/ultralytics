@@ -127,7 +127,7 @@ class BaseDataset(Dataset):
             for j, p in enumerate(img_paths):
                 p = Path(p)  # os-agnostic
                 if p.is_dir():  # dir
-                    f += glob.glob(str(p / '**' / '*.*'), recursive=True)
+                    f += sorted(glob.glob(str(p / '**' / '*.*'), recursive=True))
                     # F = list(p.rglob('*.*'))  # pathlib
                 elif p.is_file():  # file
                     with open(p) as t:
@@ -312,10 +312,10 @@ class BaseDataset(Dataset):
 
         s = np.array([x.pop("shape") for x in self.labels])  # hw
         ar = s[:, 0] / s[:, 1]  # aspect ratio
-        irect = ar.argsort()
-        self.im_files = [self.im_files[i] for i in irect]
-        self.labels = [self.labels[i] for i in irect]
-        ar = ar[irect]
+        # irect = ar.argsort()
+        # self.im_files = [self.im_files[i] for i in irect]
+        # self.labels = [self.labels[i] for i in irect]
+        # ar = ar[irect]
 
         # Set training image shapes
         shapes = [[1, 1]] * nb

@@ -70,7 +70,8 @@ from .block import (
     MANet, 
     HyperComputeModule,
     MSTF_BLOCK,
-    MSTFv1
+    MSTFv1,
+    UpSample2XTest
 )
 from .conv import (
     CBAM,

@@ -5,9 +5,9 @@ import os, json, pickle
 # anno_json = "/data/jiahaoguo/dataset/speed_merge/merge_test_1.json"
 # pred_json = "/data/jiahaoguo/YOLOFT/yoloft/train53/predictions.json"
 # anno_json = "/data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
-anno_json = "/data/jiahaoguo/dataset/XS-VIDv2/annotations/fix/test.json"
-# anno_json = "/data/jiahaoguo/dataset/gaode_6/annotations/task1_2videos.json"
-pred_json = "/data/jiahaoguo/ultralytics_yoloft/ultralytics/results/[Dfine-L]results_54.10.json"
+# anno_json = "/data/jiahaoguo/dataset/XS-VIDv2/annotations/fix/test.json"
+anno_json = '/data/jiahaoguo/dataset/gaode_6/annotations/task9/task9_test.json'
+pred_json = "results/gaode/yolov8s_2_1688_f16_2core.bmodel_bmcv_python_result_0.001_task_9.json"
 
 # 27.8 38.5 34.0 0.5 9.5 53.2 26.3 66.4 43.3
 # 8.9 13.8 9.2 1.0 11.0 19.3 3.2 27.5 27.6

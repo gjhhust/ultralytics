@@ -47,6 +47,7 @@ class DetectionValidator(BaseValidator):
         self.iouv = torch.linspace(0.5, 0.95, 10)  # IoU vector for mAP@0.5:0.95
         self.niou = self.iouv.numel()
         self.lb = []  # for autolabelling
+        self.preds_list = []
         if self.args.save_hybrid:
             LOGGER.warning(
                 "WARNING ⚠️ 'save_hybrid=True' will append ground truth to predictions for autolabelling.\n"
@@ -118,9 +119,18 @@ class DetectionValidator(BaseValidator):
         bar = TQDM(self.dataloader, desc=self.get_desc(), total=len(self.dataloader))
         self.init_metrics(de_parallel(model))
         self.jdict = []  # empty before each val
+        
+        last_video_str = None
         for batch_i, batch in enumerate(bar):
             self.run_callbacks("on_val_batch_start")
             self.batch_i = batch_i
+            if self.data.get("video", False):
+                assert len(batch["im_file"]) == 1, "batch size should be 1 for video"
+                video_str = os.path.basename(os.path.dirname(batch["im_file"][0]))
+                if video_str != last_video_str:
+                    self.preds_list = []
+                last_video_str = video_str
+            
             # if batch_i > 5:
             #     break  # for debugging
             # Preprocess
@@ -138,7 +148,10 @@ class DetectionValidator(BaseValidator):
 
             # Postprocess
             with dt[3]:
-                preds = self.postprocess(preds)
+                if self.data.get("video", False):
+                    preds = self.postprocess_video(preds)
+                else:
+                    preds = self.postprocess(preds)
 
             self.update_metrics(preds, batch)
             if self.args.plots and batch_i < 3:
@@ -233,6 +246,23 @@ class DetectionValidator(BaseValidator):
     def get_desc(self):
         """Return a formatted string summarizing class metrics of YOLO model."""
         return ("%22s" + "%11s" * 6) % ("Class", "Images", "Instances", "Box(P", "R", "mAP50", "mAP50-95)")
+
+    def postprocess_video(self, preds):
+        """Apply Non-maximum suppression to prediction outputs."""
+        preds = ops.enhance_prediction_with_history(self.preds_list + [preds])
+        preds_nms = ops.non_max_suppression(
+            preds,
+            self.args.conf,
+            self.args.iou,
+            labels=self.lb,
+            multi_label=True,
+            agnostic=self.args.single_cls or self.args.agnostic_nms,
+            max_det=self.args.max_det,
+        )
+        self.preds_list.append(preds_nms[0])
+        if len(self.preds_list) > 40:
+            self.preds_list.pop(0)
+        return preds_nms
 
     def postprocess(self, preds):
         """Apply Non-maximum suppression to prediction outputs."""

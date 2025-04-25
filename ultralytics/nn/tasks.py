@@ -71,6 +71,7 @@ from ultralytics.nn.modules import (
     MSTF_STREAM,
     MSTF_STREAM_cbam,
     DySample,
+    UpSample2XTest,
     MSTFDC,
     MSTFDC_T,
     MSTF_BLOCK,
@@ -1370,7 +1371,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c2 = sum(ch[x] for x in f[:2])
             args.insert(0, c1)
             
-        elif m is DySample:
+        elif m in (DySample,UpSample2XTest):
             c1 = ch[f]
             c2 = ch[f]
             args.insert(0, c1)

@@ -2200,6 +2200,107 @@ class DySample(nn.Module):
             return self.forward_pl(x)
         return self.forward_lp(x)
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class UpSample2XTest(nn.Module):
+    def __init__(self, in_channels, upsample_method='nearest'):
+        super().__init__()
+        self.in_channels = in_channels
+        self.upsample_method = upsample_method
+
+        # Define layers for learnable upsampling methods in the constructor
+        if upsample_method == 'convtranspose':
+            self.up = nn.ConvTranspose2d(in_channels, in_channels, kernel_size=4, stride=2, padding=1)
+        elif upsample_method == 'subpixelconv':
+            out_channels = in_channels // 4
+            if in_channels % 4 != 0:
+                raise ValueError(f"Input channels ({in_channels}) must be divisible by 4 for SubpixelConv with scale factor 2.")
+            self.up = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels * 4, kernel_size=3, stride=1, padding=1),
+                nn.PixelShuffle(2)
+            )
+        elif upsample_method == 'deconv_bn_relu':
+            self.up = nn.Sequential(
+                nn.ConvTranspose2d(in_channels, in_channels, kernel_size=4, stride=2, padding=1),
+                nn.BatchNorm2d(in_channels),
+                nn.ReLU(inplace=True)
+            )
+        elif upsample_method == 'espcn':
+            # Placeholder for ESPCN layers - you'll need to define the architecture
+            # based on your specific ESPCN implementation
+            self.up = ESPCNUpsample2X(in_channels)
+        elif upsample_method == 'carafe':
+            # Placeholder for CARAFE layers - you'll need to define the architecture
+            # based on your specific CARAFE implementation
+            self.up = CARAFEUpsample2X(in_channels)
+        else:
+            self.up = None # For non-learnable methods, no specific layer in init
+
+    def forward(self, x):
+        # Assuming x is always in [b, c, h, w] format
+        method = self.upsample_method
+        if method == 'nearest':
+            return F.interpolate(x, scale_factor=2, mode='nearest')
+        elif method == 'linear':
+            raise ValueError("Linear interpolation is not suitable for 2D (image) upsampling. Consider 'bilinear'.")
+        elif method == 'bilinear':
+            return F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
+        elif method == 'bicubic':
+            return F.interpolate(x, scale_factor=2, mode='bicubic', align_corners=False)
+        elif method == 'trilinear':
+            raise ValueError("Trilinear interpolation is for 3D data. Your input is 2D (image).")
+        elif method in ['pixelshuffle', 'convtranspose', 'subpixelconv', 'deconv_bn_relu', 'espcn', 'carafe']:
+            if self.up is not None:
+                return self.up(x)
+            else:
+                raise NotImplementedError(f"Layer for upsampling method '{method}' not initialized correctly.")
+        else:
+            raise ValueError(f"Unsupported upsampling method: {method}")
+
+# --- Implementations for advanced upsampling modules ---
+
+class CARAFEUpsample2X(nn.Module):
+    def __init__(self, in_channels, kernel_size=5, up_scale=2, compress_factor=2):
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.up_scale = up_scale
+        self.compress_factor = compress_factor
+        self.encoder = nn.Conv2d(in_channels, in_channels // compress_factor, kernel_size=1)
+        self.decoder = nn.Conv2d(in_channels // compress_factor, up_scale * up_scale * kernel_size * kernel_size, kernel_size=kernel_size, padding=kernel_size // 2)
+
+    def forward(self, x):
+        n, c, h, w = x.size()
+        kernel_pred = self.decoder(self.encoder(x))
+        kernel_pred = kernel_pred.view(n, self.up_scale * self.up_scale, self.kernel_size * self.kernel_size, h, w)
+        kernel_pred = F.softmax(kernel_pred, dim=2)
+
+        output = torch.zeros(n, c, h * self.up_scale, w * self.up_scale, device=x.device)
+        for i in range(h * self.up_scale):
+            for j in range(w * self.up_scale):
+                y = i // self.up_scale
+                x_ = j // self.up_scale
+                output[:, :, i, j] = torch.sum(
+                    x[:, :, max(0, y - self.kernel_size // 2):min(h, y + self.kernel_size // 2 + 1),
+                      max(0, x_ - self.kernel_size // 2):min(w, x_ + self.kernel_size // 2 + 1)] *
+                    kernel_pred[:, (i % self.up_scale) * self.up_scale + (j % self.up_scale), :, y, x_].view(n, 1, -1),
+                    dim=-1
+                )
+        return output
+
+class ESPCNUpsample2X(nn.Module):
+    def __init__(self, in_channels, num_features=64, out_channels=3):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, num_features, kernel_size=3, stride=1, padding=1)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(num_features, out_channels * 4, kernel_size=3, stride=1, padding=1)
+
+    def forward(self, x):
+        x = self.relu1(self.conv1(x))
+        x = self.conv2(x)
+        return F.pixel_shuffle(x, upscale_factor=2)
+        
 
 class MANet(nn.Module):
 
