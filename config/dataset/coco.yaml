@@ -7,28 +7,29 @@
 # └── datasets
 #     └── coco  ← downloads here (20.1 GB)
 # datasetname: YOLODataset #YOLODataset YOLOVideoDataset
-datasampler:  #使得生成的index和视频关联streamSampler
-datasetname: YOLODataset #YOLOStreamDataset YOLOVideoDataset
+
+datasampler:  #使得生成的index和视频关联
+datasetname: YOLODataset
 
 # datasampler: streamSampler  #使得生成的index和视频关联 streamSampler
 # datasetname: YOLOVideoDataset #YOLOStreamDataset YOLOVideoDataset
 split_mode: length #length #random 
 videos: False
 
-train: /data/shuzhengwang/project/ultralytics/ultralytics/data/datasets/coco/train2017.txt
-train_labels_dir: /data/shuzhengwang/project/ultralytics/ultralytics/data/datasets/coco/labels/train2017/
-train_images_dir: /data/shuzhengwang/project/ultralytics/ultralytics/data/datasets/coco/images/train2017/
+train: /data/jiahaoguo/ultralytics_yoloft/ultralytics/ultralytics/data/datasets/coco/train2017.txt
+train_labels_dir: /data/jiahaoguo/ultralytics_yoloft/ultralytics/ultralytics/data/datasets/coco/labels/train2017/
+train_images_dir: /data/jiahaoguo/ultralytics_yoloft/ultralytics/ultralytics/data/datasets/coco/images/train2017/
 
-val: /data/shuzhengwang/project/ultralytics/ultralytics/data/datasets/coco/val2017.txt
-val_labels_dir: /data/shuzhengwang/project/ultralytics/ultralytics/data/datasets/coco/labels/val2017/
-val_images_dir: /data/shuzhengwang/project/ultralytics/ultralytics/data/datasets/coco/images/val2017/
+val: /data/jiahaoguo/ultralytics_yoloft/ultralytics/ultralytics/data/datasets/coco/val2017.txt
+val_labels_dir: /data/jiahaoguo/ultralytics_yoloft/ultralytics/ultralytics/data/datasets/coco/labels/val2017/
+val_images_dir: /data/jiahaoguo/ultralytics_yoloft/ultralytics/ultralytics/data/datasets/coco/images/val2017/
 
-test: /data/shuzhengwang/project/ultralytics/ultralytics/data/datasets/coco/val2017.txt
-test_labels_dir: /data/shuzhengwang/project/ultralytics/ultralytics/data/datasets/coco/labels/val2017/
-test_images_dir: /data/shuzhengwang/project/ultralytics/ultralytics/data/datasets/coco/images/val2017/
+test: /data/jiahaoguo/ultralytics_yoloft/ultralytics/ultralytics/data/datasets/coco/val2017.txt
+test_labels_dir: /data/jiahaoguo/ultralytics_yoloft/ultralytics/ultralytics/data/datasets/coco/labels/val2017/
+test_images_dir: /data/jiahaoguo/ultralytics_yoloft/ultralytics/ultralytics/data/datasets/coco/images/val2017/
 
 # Train/val/test sets as 1) dir: path/to/imgs, 2) file: path/to/imgs.txt, or 3) list: [path/to/imgs1, path/to/imgs2, ..]
-path: /data/shuzhengwang/project/ultralytics/ultralytics/data/datasets/coco # dataset root dir
+path: /data/jiahaoguo/ultralytics_yoloft/ultralytics/ultralytics/data/datasets/coco # dataset root dir
 
 split_length: [1] #先使用10的片段训练，再50 "all"表示不切割 #{2:12, 3:8, 4:6, 5:5, 6:4}
 
@@ -40,7 +41,7 @@ match_number: 1  #当前帧前后各取一共几个关连帧，match_number=2即
 interval: 1    # 取得帧间隔当前帧
 interval_mode: interval #all：interval也会取尽所有视频 single则all/interval数量
 
-eval_ann_json: /data/shuzhengwang/project/ultralytics/ultralytics/data/datasets/coco/annotations/instances_val2017.json
+eval_ann_json: /data/jiahaoguo/ultralytics_yoloft/ultralytics/ultralytics/data/datasets/coco/annotations/instances_val2017.json
 # Classes
 names:
   0: person

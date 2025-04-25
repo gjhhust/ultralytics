@@ -15,7 +15,7 @@ if args.model_type == 'YOLOFT':
 else:
     path = "runs/save/train59_YOLOv8S_Dcn_dy_gaode/weights/best.pt"
     model = YOLO(path)  # load a custom model"
-    divice_id = 1
+    divice_id = 3
 
 model.info()
 # Validate the model

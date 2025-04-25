@@ -191,6 +191,197 @@ def nms_rotated(boxes, scores, threshold=0.45):
     return sorted_idx[pick]
 
 
+def box_iou(box1, box2, eps=1e-7):
+    # https://github.com/pytorch/vision/blob/master/torchvision/ops/boxes.py
+    (a1, a2), (b1, b2) = box1.unsqueeze(1).chunk(2, 2), box2.unsqueeze(0).chunk(2, 2)
+    inter = (torch.min(a2, b2) - torch.max(a1, b1)).clamp(0).prod(2)
+    return inter / ((a2 - a1).prod(2) + (b2 - b1).prod(2) - inter + eps)
+
+def enhance_prediction_with_history(
+    prediction_list, # 输入列表: [先前帧NMS结果1, 先前帧NMS结果2, ..., 当前帧原始预测]
+    video_iou_thres: float = 0.1, # 用于匹配历史框和当前框以进行增强的IoU阈值
+    boost_factor: float = 0.2,    # 控制置信度提升强度的因子 (提升量 = boost_factor * hist_conf * iou)
+    conf_thres: float = 0.2,     # 用于过滤历史检测框的置信度阈值 (也可能影响当前帧哪些框参与计算)
+    nc: int = 0,                  # 类别数量 (可选, 否则会尝试从张量形状推断)
+) -> torch.Tensor:
+    """
+    利用先前帧的检测结果来增强当前帧的原始预测张量。
+
+    此函数主要通过提升与高置信度历史检测框重叠的当前预测框的置信度分数来工作。
+    它直接修改并返回当前帧的预测张量，以便后续传递给标准的NMS函数。
+
+    Args:
+        prediction_list (List[Union[torch.Tensor, List[torch.Tensor]]]): 包含以下内容的列表：
+            - 零个或多个先前帧的NMS输出张量 (形状: [N, 6+M], 格式: [x1, y1, x2, y2, conf, cls, ...masks])。
+            - 最后一个元素是 *当前* 帧的 *原始* 预测张量 (模型输出格式, 例如: [B, C+4+M, NumAnchors])。
+              *假设视频处理中批次大小(B)为1*。
+        video_iou_thres (float): IoU阈值，当前框与历史框的IoU超过此值才考虑增强。
+        boost_factor (float): 控制置信度提升量的系数。
+        conf_thres (float): 用于过滤先前帧NMS结果的置信度阈值，低于此值的历史框不用于增强。
+        nc (int, optional): 模型的类别数。如果为0，则尝试从预测张量形状推断。
+
+    Returns:
+        (torch.Tensor): 修改后的当前帧原始预测张量。置信度分数可能已被提升。
+                        形状与输入的当前帧预测张量相同。
+    """
+    if not prediction_list:
+        raise ValueError("输入 prediction_list 不能为空")
+
+    # --- 输入处理 ---
+    # 分离历史NMS输出和当前原始预测
+    if len(prediction_list) == 1:
+        LOGGER.info("只提供了当前帧，不进行历史增强。")
+        # 如果最后一个元素可能是 (inference_out, loss_out) 元组
+        current_prediction = prediction_list[0][0] if isinstance(prediction_list[0], (list, tuple)) else prediction_list[0]
+        return current_prediction # 直接返回原始预测
+
+    # 获取当前帧的原始预测
+    current_prediction_input = prediction_list[-1]
+    current_prediction = current_prediction_input[0] if isinstance(current_prediction_input, (list, tuple)) else current_prediction_input
+
+    # 获取历史帧的NMS输出
+    historical_outputs = [out for out in prediction_list[:-1] if isinstance(out, torch.Tensor) and out.numel() > 0]
+
+    if not historical_outputs:
+        LOGGER.info("没有有效的历史帧信息提供，不进行增强。")
+        return current_prediction
+
+    # 检查当前预测的批次大小
+    bs = current_prediction.shape[0]
+    if bs > 1:
+        LOGGER.warning(f"警告 ⚠️: enhance_prediction_with_history 假设批次大小为1，但检测到 {bs}。仅处理第一张图像。")
+        current_prediction = current_prediction[0:1]
+        # 注意: 如果原始批次大于1，返回修改后的单张图像预测可能与调用者预期不符
+
+    # --- 推断参数 ---
+    pred_shape1 = current_prediction.shape[1] # num_classes + 4 + num_masks
+    num_boxes_raw = current_prediction.shape[2] # 原始预测中的框数量
+    _nc = nc or (pred_shape1 - 4) # 推断类别数
+    nm = pred_shape1 - _nc - 4 # 推断掩码数
+    if nc > 0 and nc != _nc:
+        LOGGER.warning(f"警告 ⚠️: 提供的 nc={nc} 与根据形状推断的 nc={_nc} 不符。使用推断值 nc={_nc}。")
+    nc = _nc # 最终使用的类别数
+
+    # --- 聚合历史数据 ---
+    historical_boxes_list = []
+    for hist_out in historical_outputs:
+        # 根据置信度阈值过滤历史框
+        hist_out_filtered = hist_out[hist_out[:, 4] >= conf_thres]
+        if hist_out_filtered.shape[0] > 0:
+            historical_boxes_list.append(hist_out_filtered)
+
+    if not historical_boxes_list:
+        LOGGER.info("根据 conf_thres 过滤后，没有有效的历史框用于增强。")
+        return current_prediction
+
+    # 合并所有过滤后的历史框 [x1, y1, x2, y2, conf, cls, ...]
+    all_historical_boxes = torch.cat(historical_boxes_list, dim=0)
+    hist_coords = all_historical_boxes[:, :4]    # 历史框坐标 (M, 4) in xyxy format
+    hist_confs = all_historical_boxes[:, 4]     # 历史框置信度 (M,)
+    hist_classes = all_historical_boxes[:, 5]    # 历史框类别 (M,)
+    LOGGER.info(f"聚合了 {all_historical_boxes.shape[0]} 个来自先前帧的历史检测框用于增强。")
+
+    # --- 处理当前帧预测以计算增强量 (不修改原始张量，先计算) ---
+    # 转置以便于处理每个框: (1, C+4+M, N) -> (1, N, C+4+M)
+    prediction_transposed = current_prediction.transpose(-1, -2)
+
+    # 获取当前帧的框坐标 (xywh格式) 并转换为 xyxy 用于IoU计算
+    # 注意：这里进行了克隆操作，以避免在计算IoU时意外修改原始数据
+    current_boxes_xywh = prediction_transposed[0, :, :4].clone() # (N, 4)
+    current_boxes_xyxy = xywh2xyxy(current_boxes_xywh)       # (N, 4)
+
+    # --- 计算 IoU 和 增强量 (矢量化操作) ---
+    if current_boxes_xyxy.shape[0] == 0 or hist_coords.shape[0] == 0:
+        LOGGER.info("当前帧没有预测框或没有历史框，无法计算增强。")
+        return current_prediction
+
+    # 计算当前所有框与所有历史框的IoU: (N, M)
+    ious = box_iou(current_boxes_xyxy, hist_coords)
+
+    # 获取当前每个框的最优类别分数和索引
+    # (1, N, C) -> (N, C) -> (N,), (N,)
+    current_cls_scores_all = prediction_transposed[0, :, 4:4+nc] # (N, C)
+    # current_best_conf, current_best_cls_indices = current_cls_scores_all.max(dim=1) # (N,), (N,)
+
+    # --- 矢量化计算置信度提升 ---
+    # 1. 找出每个当前框的最佳类别索引
+    current_best_cls_indices = current_cls_scores_all.argmax(dim=1) # Shape: (N,)
+
+    # 2. 扩展维度以进行广播比较
+    hist_classes_exp = hist_classes.unsqueeze(0)        # Shape: (1, M)
+    current_best_cls_indices_exp = current_best_cls_indices.unsqueeze(1) # Shape: (N, 1)
+
+    # 3. 计算掩码
+    #    - 类别匹配掩码: 当前框的最佳类别是否与历史框类别匹配
+    class_match_mask = (current_best_cls_indices_exp == hist_classes_exp) # Shape: (N, M)
+    #    - IoU阈值掩码: IoU是否满足 video_iou_thres
+    # --- 根据当前框面积动态计算 IoU 阈值 ---
+    current_boxes_areas = (current_boxes_xyxy[:, 2] - current_boxes_xyxy[:, 0]) * (current_boxes_xyxy[:, 3] - current_boxes_xyxy[:, 1]) # (N,)
+    # 归一化面积到 0-1 范围 (假设一个合理的面积范围，可以根据实际情况调整)
+    min_area = 4 # 假设最小面积为 0
+    max_area = 256 # 假设最大面积为 10000，需要根据实际图像和目标大小调整
+    normalized_areas = torch.clamp((current_boxes_areas - min_area) / (max_area - min_area), 0, 1) # (N,)
+    # 根据归一化面积计算 IoU 阈值，线性映射到 [0.01, 0.4]
+    dynamic_iou_thres = 0.01 + (0.4 - 0.01) * normalized_areas # (N,)
+    dynamic_iou_thres_exp = dynamic_iou_thres.unsqueeze(1) # (N, 1)
+
+    #     - IoU阈值掩码: IoU是否满足动态计算的阈值
+    iou_threshold_mask = (ious > dynamic_iou_thres_exp)                           # Shape: (N, M)
+    #    - 有效重叠掩码: 同时满足类别匹配和IoU阈值
+    valid_overlap_mask = class_match_mask & iou_threshold_mask            # Shape: (N, M)
+
+    # 4. 计算潜在的增强信号 (hist_conf * iou)
+    #    扩展 hist_confs 以匹配 ious 形状: (1, M)
+    boost_signals = ious * hist_confs.unsqueeze(0) # Shape: (N, M)
+
+    # 5. 将无效重叠区域的增强信号置零
+    boost_signals[~valid_overlap_mask] = 0
+
+    # 6. 找到每个当前框对应的最大增强信号
+    #    .values 获取最大值本身
+    max_boost_signal_per_box = boost_signals.max(dim=1).values # Shape: (N,)
+
+    # 7. 计算最终要施加的置信度提升量
+    boosts_to_apply = boost_factor * max_boost_signal_per_box # Shape: (N,)
+
+    # --- 将计算出的提升量应用到 *原始* 的 current_prediction 张量 ---
+    # 我们需要将 boosts_to_apply[i] 加到 current_prediction[0, 4 + current_best_cls_indices[i], i] 上
+
+    # 获取原始置信度分数部分视图 (C, N) for batch 0
+    original_scores_view = current_prediction[0, 4:4+nc, :]
+
+    # 使用 advanced indexing (scatter-like operation) 添加提升量
+    # 创建一个与分数视图同形的零张量
+    boost_tensor = torch.zeros_like(original_scores_view)
+    # 获取需要更新的行索引 (类别索引) 和列索引 (框索引)
+    row_indices = current_best_cls_indices # Shape: (N,)
+    col_indices = torch.arange(num_boxes_raw, device=current_prediction.device) # Shape: (N,)
+    # 将计算出的提升量放置到 boost_tensor 的对应位置
+    boosts_to_apply_casted = boosts_to_apply.to(boost_tensor.dtype)
+    boost_tensor[row_indices, col_indices] = boosts_to_apply_casted
+
+    # 将提升量加到原始分数上
+    boosted_scores = original_scores_view + boost_tensor
+
+    # 限制最大置信度为 1.0
+    boosted_scores.clamp_(max=1.0)
+
+    # 将修改后的分数写回 current_prediction 张量
+    # 这是原地修改 (in-place modification)
+    current_prediction[0, 4:4+nc, :] = boosted_scores
+
+    LOGGER.info(f"已对当前帧预测的 {torch.sum(boosts_to_apply > 0).item()} 个框应用了置信度增强。最大涨幅:{boost_tensor.max().item()}, 最小涨幅:{boost_tensor.min().item()}")
+
+    # 如果原始输入是元组 (inf_out, loss_out)，我们只修改了 inf_out
+    # 这里需要根据输入类型返回，但目前只返回修改后的张量
+    if isinstance(current_prediction_input, (list, tuple)):
+        # 如果需要保持原始结构 (例如元组), 需要相应地重构
+        # return (current_prediction, current_prediction_input[1])
+        # 但函数签名约定返回 Tensor，所以我们返回修改后的张量
+        return current_prediction
+    else:
+        return current_prediction # 返回被修改的当前帧预测张量
+
 def non_max_suppression(
     prediction,
     conf_thres=0.25,

@@ -34,7 +34,6 @@ split_batch_dict:
 match_number: 1  #当前帧前后各取一共几个关连帧，match_number=2即前后各取一个
 interval: 2    # 取得帧间隔当前帧
 interval_mode: interval #all：interval也会取尽所有视频 single则all/interval数量
-
 #coco eval
 eval_ann_json: /data/jiahaoguo/datasets/gaode_6/annotations/task1/task1_test.json
 classes_map: [0,1]
