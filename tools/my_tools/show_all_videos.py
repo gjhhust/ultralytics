@@ -7,8 +7,8 @@ import numpy as np
 
 # 配置路径
 pred_path = '/data/shuzhengwang/project/ultralytics/runs/save/train81_9.5/val24/prediction_nms.json'
-anno_path = "/data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
-image_base = "/data/jiahaoguo/dataset/gaode_6/images/"
+anno_path = "/data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
+image_base = "/data/jiahaoguo/datasets/gaode_6/images/"
 output_dir = "./visualization_videos/"
 os.makedirs(output_dir, exist_ok=True)
 

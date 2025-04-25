@@ -9,6 +9,7 @@ from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
 from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad, DCNV3_conv,ModulatedDeformConv,DeformConv, GroupConv
 from .transformer import TransformerBlock
+from .flow import SepConvGRU, ConvGRU
 
 __all__ = (
     "DFL",
@@ -1692,6 +1693,61 @@ def _is_power_of_2(n):
 
     return (n & (n - 1) == 0) and n != 0
 
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class DepthSeparableConv3D(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.bias = bias
+
+        # Depth-wise 3D convolution (temporal kernel size 1)
+        self.depthwise_conv = nn.Conv3d(
+            in_channels=in_channels,
+            out_channels=in_channels,
+            kernel_size=(1, kernel_size, kernel_size),
+            stride=(1, stride, stride),
+            padding=(0, padding, padding),
+            groups=in_channels,
+            bias=bias
+        )
+        self.depthwise_bn = nn.BatchNorm3d(in_channels)
+        self.depthwise_act = nn.SiLU()
+
+        # Point-wise 3D convolution (temporal kernel size 1)
+        self.pointwise_conv = nn.Conv3d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=(1, 1, 1),
+            stride=1,
+            padding=0,
+            bias=bias
+        )
+        self.pointwise_bn = nn.BatchNorm3d(out_channels)
+        self.pointwise_act = nn.SiLU()
+
+    def forward(self, x1, x2):
+        # Concatenate the two input tensors along the temporal dimension (creating a pseudo-3D input)
+        # Assuming the 'temporal' dimension is the first one after batch
+        x = torch.stack((x1, x2), dim=2) # Output shape: [b, c, 2, h, w]
+
+        out = self.depthwise_conv(x) # Shape: [b, c, 2, h', w']
+        out = self.depthwise_bn(out)
+        out = self.depthwise_act(out)
+        out = self.pointwise_conv(out) # Shape: [b, out_channels, 2, h', w']
+        out = self.pointwise_bn(out)
+        out = self.pointwise_act(out)
+
+        # Return only the output corresponding to the 'current' time step (assuming it's the second one)
+        return out[:, :, 1, :, :] # Shape: [b, out_channels, h', w']
+    
 class FDCN(nn.Module):
     default_act = nn.SiLU()  # default activation
     def __init__(
@@ -1710,6 +1766,7 @@ class FDCN(nn.Module):
             norm_layer='LN',
             center_feature_scale=False,
             act=True,
+            is_encoder = True,
             ):
         """
         DCNv3 Module
@@ -1747,7 +1804,11 @@ class FDCN(nn.Module):
         self.offset_scale = offset_scale
         self.center_feature_scale = center_feature_scale
         self.gru = gru
-        self.encoder = Conv(channels, net_channels, k=1)
+        self.is_encoder = is_encoder
+        if is_encoder:
+            self.encoder = Conv(channels, net_channels, k=1)
+            
+        
         self.dw_conv = nn.Sequential(
             nn.Conv2d(
                 net_channels,
@@ -1790,7 +1851,10 @@ class FDCN(nn.Module):
         :param input_y                      (N, C//2, H, W)
         :return output                     (N, C, H, W)
         """
-        input_x_en = self.encoder(input_x)  #(N, C//2, H, W)
+        if self.is_encoder:
+            input_x_en = self.encoder(input_x)  #(N, C//2, H, W)
+        else:
+            input_x_en = input_x
         input_y = self.gru(input_y, input_x_en)  #(N, C//2, H, W)
         input = input_x.permute(0, 2, 3, 1) #(N, H, W, C)
         
@@ -1938,8 +2002,18 @@ class MSTFv1(nn.Module):
                                         self.net_dim, 
                                         kernel_size = 3)
             self.forward = self.forward_mstf
+        elif mode == "conv3d":
+            in_channel = in_channels[0] + in_channels[1]
+            self.net_dim = int(in_channel*width)
+            assert self.net_dim == in_channels[-1], f"input last feature dims must equal to now feature dims, plase set InputData:[{in_channels[-1]}]->[{self.net_dim}]"
+            self.block = FDCN(DepthSeparableConv3D(in_channels=self.net_dim, out_channels=self.net_dim), 
+                                        in_channel, 
+                                        self.net_dim, 
+                                        kernel_size = 3,
+                                        is_encoder=True)
+            self.forward = self.forward_mstf
         else:
-            raise ValueError("MSTFv1 paramter [mode] must be in [concat, net]")
+            raise ValueError("MSTFv1 paramter [mode] must be in [concat, net, conv3d]")
 
     def forward_concat(self, x):
         """Forward pass for the YOLOv8 mask Proto module."""
@@ -1957,162 +2031,6 @@ class MSTFv1(nn.Module):
         x = x + input_x
         
         return x, net
-
-from ultralytics.nn.modules.flow import CorrBlock, AlternateCorrBlock, initialize_flow,SepConvGRU,  ConvGRU, BasicUpdateBlock, SmallNetUpdateBlock,  NetUpdateBlock, SmallUpdateBlock, warp_feature, ConvGRU
-
-class MSTF_FLOW(nn.Module): #
-    def __init__(self, inchannle, hidden_dim=64, epoch_train=22, stride=[2,2,2], radius=[3,3,3], n_levels=3, iter_max=2, method = "method1", motion_flow = True, aux_loss = False):
-        '''
-        input_dim  dim of the backbone features.
-        hidden_dim Memorizing hidden and input layers
-        n_levels Number of multi-scale feature maps
-        epoch_train start fused 
-        iter_max Number of iterations
-        '''
-        super(MSTF_FLOW, self).__init__()
-        input_dim = inchannle[0] 
-
-        if not (input_dim//2 >= hidden_dim):
-            print("************warning****************")
-            print(f"input_dim//2 need bigger than hidden_dim, {inchannle},{hidden_dim}") 
-            print("***********************************")
-
-        self.inchannle = inchannle
-
-        self.hidden_dim = hidden_dim # input_dim//2
-        self.iter_max = iter_max
-        self.n_levels = n_levels
-        self.radius = radius
-        self.stride = stride
-        self.epoch_train = epoch_train
-        self.method = method
-        self.aux_loss = aux_loss
-        self.motion_flow = motion_flow
-        self.cor_planes = [n_levels * (2*radiu + 1)**2 for radiu in radius]
-
-
-        self.convs1 = nn.ModuleList([flow_conv(inchannle[i], self.hidden_dim, 1) 
-                                    for i in range(n_levels)])
-        
-        self.convs2 = nn.ModuleList([flow_conv(self.hidden_dim + self.hidden_dim//2, inchannle[i], 1) 
-                                    for i in range(n_levels)])  # optional act=FReLU(c2)
-        
-        # buffer
-        self.buffer = FlowBuffer("MemoryAtten", number_feature=n_levels)
-
-        cor_plane = self.cor_planes[1]
-        self.cor_plane = cor_plane
-        self.cor_plane = 2*(self.cor_plane//2) #Guaranteed to be even.
-
-        self.flow_fused0 = FlowUp(self.cor_planes[2], self.cor_planes[1], self.cor_plane)
-        self.flow_fused1 = FlowUp(self.cor_plane,self.cor_planes[0], self.cor_plane)
-        
-        self.flow_fused2 = FlowDown(self.cor_plane ,self.cor_plane, self.cor_planes[2], self.cor_plane)
-        
-        self.update_block = SmallNetUpdateBlock(input_dim=self.hidden_dim//2, hidden_dim=self.hidden_dim//2, cor_plane = self.cor_plane)
-
-        self.plot = False
-        self.save_dir = "./MSTF_saveDir"
-        self.pad_image_func = None
-        
-        
-
-    def forward(self,x):
-        # self.plot = True
-        fmaps_old = x[0]  
-        fmaps_new = x[1:]  #3,B,C,H,W The incoming scale must be from large to small
-        if fmaps_old == [None, None, None]:
-            fmaps_old = [torch.zeros_like(f, device=f.device, dtype=f.dtype) for f in fmaps_new]
-        else:
-            fmaps_old = [fmap.permute(0, 3, 1, 2) for fmap in fmaps_old]
-
-        # Gradient triage, dimensional consistency
-        out_list = []
-        fmaps_new = []
-        inp = []
-        for i in range(self.n_levels):
-            out, fmap = self.convs1[i](x[1:][i]).chunk(2, 1)
-            # out, fmap = self.convs0[i](x[1:][i]).chunk(2, 1) #128,128
-            # fmap = self.convs1[i](fmap) #hidden
-            out_list.append(out)
-            fmaps_new.append(fmap)
-            inp.append(torch.relu(fmap))
-            
-        if not self.training and self.plot:
-            video_name = img_metas[0]["video_name"]
-            save_dir = os.path.join(self.save_dir, video_name)
-            os.makedirs(save_dir, exist_ok=True)
-            image_path = img_metas[0]["image_path"]
-
-            image = cv2.imread(image_path)
-            image,_ = self.pad_image_func(image)
-            height, width, _ = image.shape
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                
-            if img_metas[0]["is_first"]:
-                if hasattr(self, "video_writer_fea"):
-                    self.video_writer_fea.release()
-                self.number = 0
-                self.video_writer_fea = cv2.VideoWriter(os.path.join(save_dir, "feature_fused.mp4"), fourcc, 25, (width, height))
-                
-        src_flatten_new, spatial_shapes, level_start_index = self.buffer.flatten(fmaps_new, True)
-        result_first_frame, fmaps_old, net_old, coords0, coords1, topk_bbox = self.buffer.update_memory(src_flatten_new, img_metas, spatial_shapes, level_start_index)
-
-        corr_fn_muti = []
-        for lvl in range(self.n_levels):
-            corr_fn_muti.append(AlternateCorrBlock(fmaps_new[lvl], fmaps_old, self.n_levels, self.radius[lvl], self.stride))
-
-        # 1/32
-        lvl = 2
-        corr_32 = corr_fn_muti[lvl](coords1[lvl])
-        flow_32 = coords1[lvl] - coords0[lvl]
-        
-        # 1/16
-        lvl = 1
-        corr_16 = corr_fn_muti[lvl](coords1[lvl])
-        flow_16 = coords1[lvl] - coords0[lvl]
-        corr_16_fused = self.flow_fused0(corr_32, corr_16)
-        net_16, _, delta_flow = self.update_block(net_old[lvl], inp[lvl], corr_16_fused, flow_16)
-        coords1[lvl] = coords1[lvl] + delta_flow
-
-        # 1/8
-        lvl = 0
-        corr_8 = corr_fn_muti[lvl](coords1[lvl])
-        flow_8 = coords1[lvl] - coords0[lvl]
-        corr_8_fused = self.flow_fused1(corr_16_fused, corr_8)
-        net_8, _, delta_flow = self.update_block(net_old[lvl], inp[lvl], corr_8_fused, flow_8)
-        coords1[lvl] = coords1[lvl] + delta_flow
-        corr_8To32 = F.interpolate(corr_8_fused, scale_factor=1/4, mode="bilinear", align_corners=True)
-        corr_16To32 = F.interpolate(corr_16_fused, scale_factor=1/2, mode="bilinear", align_corners=True)
-
-        # 1/32
-        lvl = 2
-        corr_32_fused = self.flow_fused2(corr_8_fused, corr_16_fused, corr_32)
-        net_32, _, delta_flow = self.update_block(net_old[lvl], inp[lvl], corr_32_fused, flow_32)
-        coords1[lvl] = coords1[lvl] + delta_flow
-
-        #get coords1\net_8\net_16\net_32
-        net = [net_8, net_16, net_32]
-        self.buffer.update_coords(coords1)
-        self.buffer.update_net(net)
-            
-        for i in range(self.n_levels):
-            # if not self.training and self.plot:
-            #     np.save(os.path.join(flow_dir, f'level_{i}_{frame_number}.npy'), (coords1[i]-coords0[i]).cpu().numpy())
-            #     print(torch.sum(coords1[i]-coords0[i]))
-            #     np.save(os.path.join(net_dir, f'level_{i}_{frame_number}.npy'), net[i].cpu().numpy())
-            fmaps_new[i] = self.convs2[i](torch.cat([out_list[i],fmaps_new[i],net[i]], 1)) + x[1:][i]
-            # if not self.training and self.plot:
-            #     np.save(os.path.join(feature_fused_dir,  f'level_{i}_{frame_number}.npy'), fmaps_new[i].cpu().numpy())
-
-        if not self.training and self.plot:
-            # overlay_heatmap_on_video(self.video_writer_flow, image, coords1)
-            # overlay_heatmap_on_video(self.video_writer_net, image, net)
-            overlay_heatmap_on_video(self.video_writer_fea, image, fmaps_new)
-            self.number+=1
-            
-        return fmaps_new
-    
     
 import torch
 import torch.nn as nn

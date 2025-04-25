@@ -15,16 +15,16 @@ test: # test images (optional)
 
 # # train:gaode_5 test:gaode_6
 # train: /data/shuzhengwang/datasets/Objects365/images/train
-# train_labels_dir: /data/jiahaoguo/dataset/gaode_6/annotations/yolo/
-# train_images_dir: /data/jiahaoguo/dataset/gaode_6/images/
+# train_labels_dir: /data/jiahaoguo/datasets/gaode_6/annotations/yolo/
+# train_images_dir: /data/jiahaoguo/datasets/gaode_6/images/
 
-# val: /data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.txt 
-# val_labels_dir: /data/jiahaoguo/dataset/gaode_6/annotations/yolo/
-# val_images_dir: /data/jiahaoguo/dataset/gaode_6/images/
+# val: /data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.txt 
+# val_labels_dir: /data/jiahaoguo/datasets/gaode_6/annotations/yolo/
+# val_images_dir: /data/jiahaoguo/datasets/gaode_6/images/
 
-# test: /data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.txt
-# test_labels_dir: /data/jiahaoguo/dataset/gaode_6/annotations/yolo/
-# test_images_dir: /data/jiahaoguo/dataset/gaode_6/images/
+# test: /data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.txt
+# test_labels_dir: /data/jiahaoguo/datasets/gaode_6/annotations/yolo/
+# test_images_dir: /data/jiahaoguo/datasets/gaode_6/images/
 
 # Classes
 names:

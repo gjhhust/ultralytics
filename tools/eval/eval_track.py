@@ -6,7 +6,7 @@ root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
 # TAO uses logging to print results. Make sure logging is set to show INFO
 # messages, or you won't see any evaluation results.
-tao_eval = TaoEval('/data/jiahaoguo/dataset/XS-VIDv2/annotations/jsonv2/test_segment.json',
+tao_eval = TaoEval('/data/jiahaoguo/datasets/XS-VIDv2/annotations/jsonv2/test_segment.json',
                    "/data/jiahaoguo/ultralytics_yoloft/ultralytics/runs/track/run21/tracks.json", 
                    )
 tao_eval.run()

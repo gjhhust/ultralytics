@@ -246,7 +246,7 @@ def track_annotate(
         
     return result_path
 
-ann_file = "/data/jiahaoguo/dataset/XS-VIDv2/annotations/jsonv2/test_segment.json"
+ann_file = "/data/jiahaoguo/datasets/XS-VIDv2/annotations/jsonv2/test_segment.json"
 test_pt = [
             # "runs/xs-vid/train125-hyperL_12e_26.2/weights/best.pt",
            "runs/xs-vid/hyper-yoloS_best.pt",
@@ -256,7 +256,7 @@ test_pt = [
 
 results_json_path = []
 for pt in test_pt:
-    ps = track_annotate(images_dir = "/data/jiahaoguo/dataset/XS-VIDv2/images/", 
+    ps = track_annotate(images_dir = "/data/jiahaoguo/datasets/XS-VIDv2/images/", 
                 detect_model=pt,
                 tracker_yaml="bytetrack.yaml",
                 ann_file=ann_file, 

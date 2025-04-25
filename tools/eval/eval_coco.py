@@ -2,11 +2,11 @@ from pycocotools.coco import COCO  # noqa
 # from pycocotools.cocoeval import COCOeval  # noqa
 from ultralytics.data.cocoeval_xs_vid import COCOeval  # noqa
 import os, json, pickle
-# anno_json = "/data/jiahaoguo/dataset/speed_merge/merge_test_1.json"
+# anno_json = "/data/jiahaoguo/datasets/speed_merge/merge_test_1.json"
 # pred_json = "/data/jiahaoguo/YOLOFT/yoloft/train53/predictions.json"
-# anno_json = "/data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
-anno_json = "/data/jiahaoguo/dataset/XS-VIDv2/annotations/fix/test.json"
-# anno_json = "/data/jiahaoguo/dataset/gaode_6/annotations/task1_2videos.json"
+# anno_json = "/data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.json"
+anno_json = "/data/jiahaoguo/datasets/XS-VIDv2/annotations/fix/test.json"
+# anno_json = "/data/jiahaoguo/datasets/gaode_6/annotations/task1_2videos.json"
 pred_json = "/data/jiahaoguo/ultralytics_yoloft/ultralytics/results/[Dfine-L]results_54.10.json"
 
 # 27.8 38.5 34.0 0.5 9.5 53.2 26.3 66.4 43.3
@@ -60,7 +60,7 @@ print(pred_json)
 # from pycocotools.coco import COCO  # noqa
 # from ultralytics.data.cocoeval import COCOeval  # noqa
 
-# anno_json = "/data/jiahaoguo/dataset/speed_merge/merge_test_1.json"
+# anno_json = "/data/jiahaoguo/datasets/speed_merge/merge_test_1.json"
 # pred_json = "/data/jiahaoguo/YOLOFT/yoloft/train53/predictions.json"
 
 # # 加载 COCO 数据集的注释和预测

@@ -1,5 +1,5 @@
 import json
-json_path = '/data/jiahaoguo/dataset/XS-VIDv2/annotations/jsonv2/test_segment.json'
+json_path = '/data/jiahaoguo/datasets/XS-VIDv2/annotations/jsonv2/test_segment.json'
 with open(json_path, 'r') as f:
     data = json.load(f)
 

@@ -2,10 +2,10 @@ from ultralytics import YOLO, YOLOFT, YOLOWorld, NAS, SAM, FastSAM, RTDETR
 
 # Load a model
 # model = YOLO("yolo11n.pt")  # load an official model
-model = YOLO("runs/save/train126_hypers/weights/best.pt")  # load a custom trained model
+model = YOLO("yolov8s.pt")  # load a custom trained model
 
 # Export the model
-model.export(format="onnx", imgsz=896)
+model.export(format="onnx", imgsz=640)
 # model.export(format='openvino', int8=True, imgsz=896, data="config/dataset/Train_6_Test_14569_single.yaml") # imgsz 参数需要与你的模型输入尺寸匹配
 
 # import onnx

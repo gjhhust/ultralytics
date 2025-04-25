@@ -7,8 +7,11 @@
 # └── datasets
 #     └── coco  ← downloads here (20.1 GB)
 # datasetname: YOLODataset #YOLODataset YOLOVideoDataset
-datasampler: streamSampler  #使得生成的index和视频关联 streamSampler
-datasetname: YOLOVideoDataset #YOLOStreamDataset YOLOVideoDataset
+datasampler:  #使得生成的index和视频关联streamSampler
+datasetname: YOLODataset #YOLOStreamDataset YOLOVideoDataset
+
+# datasampler: streamSampler  #使得生成的index和视频关联 streamSampler
+# datasetname: YOLOVideoDataset #YOLOStreamDataset YOLOVideoDataset
 split_mode: length #length #random 
 videos: False
 
@@ -34,7 +37,7 @@ split_batch_dict:
 
 
 match_number: 1  #当前帧前后各取一共几个关连帧，match_number=2即前后各取一个
-interval: 3    # 取得帧间隔当前帧
+interval: 1    # 取得帧间隔当前帧
 interval_mode: interval #all：interval也会取尽所有视频 single则all/interval数量
 
 eval_ann_json: /data/shuzhengwang/project/ultralytics/ultralytics/data/datasets/coco/annotations/instances_val2017.json
