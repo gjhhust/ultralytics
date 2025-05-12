@@ -68,6 +68,7 @@ from .block import (
     MSTFDC,
     MSTFDC_T,
     MANet, 
+    MANetDCN,
     HyperComputeModule,
     MSTF_BLOCK,
     MSTFv1,

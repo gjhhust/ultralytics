@@ -131,6 +131,132 @@ class ContrastiveLoss(nn.Module):
 
         return loss / B
 
+def safit_loss(pred, target, eps=1e-7, C=32,
+               reduction=None, avg_factor=None):
+    r"""`Implementation of Distance-IoU Loss: Faster and Better
+    Learning for Bounding Box Regression, https://arxiv.org/abs/1911.08287`_.
+
+    Code is modified from https://github.com/Zzh-tju/DIoU.
+
+    Args:
+        pred (Tensor): Predicted bboxes of format (x1, y1, x2, y2),
+            shape (n, 4).
+        target (Tensor): Corresponding gt bboxes, shape (n, 4).
+        eps (float): Eps to avoid log(0).
+    Return:
+        Tensor: Loss tensor.
+    """
+    # IOU
+    ious = bbox_overlaps(pred, target, is_aligned=True).clamp(min=eps)
+    
+    # NWD
+    pred_xyhw = xyxy2xyw2h2(pred)
+    target_xyhw = xyxy2xyw2h2(target)
+    nwd = torch.exp(-torch.sqrt(torch.sum((pred_xyhw - target_xyhw)*(pred_xyhw - target_xyhw),dim=1))/C)
+ 
+    # SAFit
+    ag = (target[:, 2] - target[:, 0]) * (target[:, 3] - target[:, 1])
+    area = ag
+    safit = sigmoid(torch.sqrt(area)-C, C) * ious+\
+            (1-sigmoid(torch.sqrt(area)-C, C)) * nwd
+    loss = 1 - safit
+    return loss
+
+def nwd_loss(pred, target, eps=1e-7, C=32,
+             reduction=None, avg_factor=None):
+    r"""`Implementation of Distance-IoU Loss: Faster and Better
+    Learning for Bounding Box Regression, https://arxiv.org/abs/1911.08287`_.
+
+    Code is modified from https://github.com/Zzh-tju/DIoU.
+
+    Args:
+        pred (Tensor): Predicted bboxes of format (x1, y1, x2, y2),
+            shape (n, 4).
+        target (Tensor): Corresponding gt bboxes, shape (n, 4).
+        eps (float): Eps to avoid log(0).
+    Return:
+        Tensor: Loss tensor.
+    """
+    pred, target = xyxy2xyw2h2(pred), xyxy2xyw2h2(target)
+    nwd = torch.exp(-torch.norm((pred-target), p=2, dim=1)/C)
+    loss = 1 - nwd.clamp(min=-1.0, max=1.0)
+    return loss
+
+class NWDLoss(nn.Module):
+
+    def __init__(self, eps=1e-6, reduction='mean', loss_weight=1.0, C=32):
+        super(NWDLoss, self).__init__()
+        self.eps = eps
+        self.reduction = reduction
+        self.loss_weight = loss_weight
+        self.C = C
+
+    def forward(self,
+                pred,
+                target,
+                weight=None,
+                avg_factor=None,
+                reduction_override=None,
+                **kwargs):
+        if weight is not None and not torch.any(weight > 0):
+            if pred.dim() == weight.dim() + 1:
+                weight = weight.unsqueeze(1)
+            return (pred * weight).sum()  # 0
+        assert reduction_override in (None, 'none', 'mean', 'sum')
+        reduction = (
+            reduction_override if reduction_override else self.reduction)
+        if weight is not None and weight.dim() > 1:
+            # TODO: remove this in the future
+            # reduce the weight of shape (n, 4) to (n,) to match the
+            # giou_loss of shape (n,)
+            assert weight.shape == pred.shape
+            weight = weight.mean(-1)
+        loss = self.loss_weight * nwd_loss(
+            pred,
+            target,
+            eps=self.eps,
+            C = self.C,
+            reduction=reduction,
+            avg_factor=avg_factor,
+            **kwargs)
+        return loss
+    
+class SAFitLoss(nn.Module):
+    def __init__(self, eps=1e-6, reduction='mean', loss_weight=1.0):
+        super(SAFitLoss, self).__init__()
+        self.eps = eps
+        self.reduction = reduction
+        self.loss_weight = loss_weight
+
+    def forward(self,
+                pred,
+                target,
+                weight=None,
+                avg_factor=None,
+                reduction_override=None,
+                **kwargs):
+        if weight is not None and not torch.any(weight > 0):
+            if pred.dim() == weight.dim() + 1:
+                weight = weight.unsqueeze(1)
+            return (pred * weight).sum()  # 0
+        assert reduction_override in (None, 'none', 'mean', 'sum')
+        reduction = (
+            reduction_override if reduction_override else self.reduction)
+        if weight is not None and weight.dim() > 1:
+            # TODO: remove this in the future
+            # reduce the weight of shape (n, 4) to (n,) to match the
+            # giou_loss of shape (n,)
+            assert weight.shape == pred.shape
+            weight = weight.mean(-1)
+        loss = self.loss_weight * safit_loss(
+            pred,
+            target,
+            eps=self.eps,
+            reduction=reduction,
+            avg_factor=avg_factor,
+            **kwargs)
+        return loss
+    
 class VarifocalLoss(nn.Module):
     """
     Varifocal loss by Zhang et al.

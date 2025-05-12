@@ -125,17 +125,18 @@ class StreamSampler(DistributedSampler):
         return self.data_length
 
 
-class VideoSampler(Sampler):
+class VideoSampler(DistributedSampler):
     '''
     Streaming Sampling Datasets from Video
     '''
-    def __init__(self, dataset, batch_size, seed=10, distributed=False):
+    def __init__(self, dataset, batch_size, seed=10, distributed=False, shuffle=True):
         # Check if distributed mode is enabled and process group is already initialized
         self.dataset = dataset  # self.sub_videos
         self.batch_size = batch_size
         self.seed = seed
         self.epoch = 0
         self.distributed = distributed
+        self.shuffle = shuffle
         
         if distributed:
             self.rank = dist.get_rank()  # Get the rank of the current process
@@ -146,13 +147,16 @@ class VideoSampler(Sampler):
         
     def __iter__(self):
         # Generate indices for sub-videos (each sub-video is a list of frames)
-        indices = self.dataset.sampler_indices[self.rank]
+        indices = list(self.dataset.sampler_indices[self.rank])
         
         # Shuffle if needed (for training)
-        if self.seed is not None:
+        if self.shuffle:
+            # deterministically shuffle based on epoch and seed
             rng = random.Random(self.seed + self.epoch)
             rng.shuffle(indices)
-
+            if self.rank == 0 or self.rank == -1:
+                print(f"epoch: {self.epoch}, shuffle indices: {indices[:5]}")
+            
         for i in indices:
             yield i
 
@@ -377,7 +381,7 @@ def build_video_dataloader(dataset, batch, workers, shuffle=True, rank=-1):
     batch = min(batch, len(dataset))
     nd = torch.cuda.device_count()  # number of CUDA devices
     nw = min(os.cpu_count() // max(nd, 1), workers)  # number of workers
-    sampler = VideoSampler(dataset, batch, seed=1, distributed=False) if rank == -1 else VideoSampler(dataset, batch, seed=1, distributed=True)
+    sampler = VideoSampler(dataset, batch, seed=1, distributed=False) if rank == -1 else VideoSampler(dataset, batch, seed=1, distributed=True, shuffle=shuffle)
     generator = torch.Generator()
     generator.manual_seed(6148914691236517205 + RANK)
     return InfiniteDataLoader(

@@ -48,7 +48,13 @@ eval = COCOeval(anno, pred, 'bbox')
 eval.evaluate()
 eval.accumulate()
 eval.summarize()
-print(eval.stats)
+def print_formatted_stats(stats):
+    # 数字乘以100后保留一位小数
+    formatted_stats = [f"{num * 100:.1f}" for num in stats]
+    # 使用空格连接数组中的元素并打印
+    print(" ".join(formatted_stats))
+stats_result =  print_formatted_stats(eval.stats)
+# print(eval.stats)
 print(pred_json)
 
 

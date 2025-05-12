@@ -77,6 +77,7 @@ from ultralytics.nn.modules import (
     MSTF_BLOCK,
     HyperComputeModule,
     MANet,
+    MANetDCN,
     MSTFv1
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
@@ -1264,6 +1265,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C2,
             C2f,
             MANet,
+            MANetDCN,
             C2f_DCNV3,
             C2f_light,
             C2f_MDC,
@@ -1303,6 +1305,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 C2,
                 C2f,
                 MANet,
+                MANetDCN,
                 C2f_DCNV3,
                 C2f_light,
                 C2f_MDC,
