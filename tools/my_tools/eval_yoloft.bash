@@ -1,19 +1,19 @@
 # python tools/train_epoch2_386+256/train_baseline.py
 python tools/eval_baseline.py --dataset config/dataset/Train_6_Test_task1.yaml \
-                            --model_wight runs/save/train101_yoloftS_dcn_dy_s3_t/weights/best.pt --model_type YOLOFT
+                            --model_wight runs/save/train59_YOLOv8S_Dcn_dy/weights/best.pt --model_type YOLOFT
 
 python tools/eval_baseline.py --dataset config/dataset/Train_6_Test_task4.yaml \
-                            --model_wight runs/save/train101_yoloftS_dcn_dy_s3_t/weights/best.pt --model_type YOLOFT
+                            --model_wight runs/save/train59_YOLOv8S_Dcn_dy/weights/best.pt --model_type YOLOFT
 
 python tools/eval_baseline.py --dataset config/dataset/Train_6_Test_task5.yaml \
-                            --model_wight runs/save/train101_yoloftS_dcn_dy_s3_t/weights/best.pt --model_type YOLOFT
+                            --model_wight runs/save/train59_YOLOv8S_Dcn_dy/weights/best.pt --model_type YOLOFT
 
 python tools/eval_baseline.py --dataset config/dataset/Train_6_Test_task6.yaml \
-                            --model_wight runs/save/train101_yoloftS_dcn_dy_s3_t/weights/best.pt --model_type YOLOFT
+                            --model_wight runs/save/train59_YOLOv8S_Dcn_dy/weights/best.pt --model_type YOLOFT
 
                             
 python tools/eval_baseline.py --dataset config/dataset/Train_6_Test_task9.yaml \
-                            --model_wight runs/save/train101_yoloftS_dcn_dy_s3_t/weights/best.pt --model_type YOLOFT
+                            --model_wight runs/save/train59_YOLOv8S_Dcn_dy/weights/best.pt --model_type YOLOFT
 
 #task1: 68.0 90.6 77.7 54.5 95.3 99.0 70.4 99.0 98.0
 #task4: 54.1 85.4 56.1 31.7 88.2 99.0 49.7 98.9 94.7 

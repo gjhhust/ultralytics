@@ -5,7 +5,7 @@ from ultralytics import YOLOFT, YOLO
 # model = YOLOFT("config/yoloft_dev/yoloftv2-C_DCN-L.yaml").load("yolov8l.pt") #train yoloft-l
 model = YOLOFT("config/yoloft_xs_ivd/yolov8s_ftv1_dcn_dy.yaml").load("runs/xs-vid/train19_yolosdcn_dy_24.3/weights/best.pt") #train yolov8-l
 # model = YOLO("config/yoloft/yoloftsv2-C-384.yaml").load("./yoloft-C-384_obj365_e7.pt")
-# model = YOLO("config/yolo/hyper-yoloS.yaml").load("hyper-yolos.pt")
+model = YOLOFT("config/yolo_time/yolov8s_ftv1_dim384_3d.yaml").load("pretrain/yolov8s_ftv1_dim384/yolov8s_ftv1_dim384.pt")
 # model = YOLOFT("runs/save/train62_yolofts_dy_dcns1/weights/best.pt")
 
 results = model.train(data="config/dataset/XS-VIDv2.yaml",

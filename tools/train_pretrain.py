@@ -10,4 +10,4 @@ model = YOLO("config/yolo/hyper-yoloS_DCN_dy.yaml").load("hyper-yolos.pt")
 
 results = model.train(data="config/dataset/coco.yaml",
                       cfg="config/train/default.yaml", 
-                      batch=32*4, epochs=200, imgsz=640, device=[0,1,2,3],workers = 4)
+                      batch=32*4, epochs=200, imgsz=640, device=[0,1,2,3],workers = 6)

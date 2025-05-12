@@ -457,7 +457,7 @@ def postprocess(preds, conf=0.001, iou=0.7, single_cls=False, agnostic_nms=False
     )
 
 class CocoEvaluators:
-    def __init__(self, eval_ann_json="/data/jiahaoguo/dataset/gaode_6/annotations/mini_val/gaode_6_mini_val.json", 
+    def __init__(self, eval_ann_json="/data/jiahaoguo/datasets/gaode_6/annotations/mini_val/gaode_6_mini_val.json", 
                  class_map = [0,1],#将模型预测的分类映射为 index: value，这里相当于没有映射
                  nc=2):
         """Initialize evaluation metrics for YOLO."""
@@ -637,8 +637,8 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_path", type=str, default="runs/save/train227_yoloft_dydcn_newdata/weights/best_int8_openvino_model")
 parser.add_argument("--model_type", type=str, default='yoloft')
-parser.add_argument("--json_path", type=str, default='/data/jiahaoguo/dataset/gaode_6/annotations/task1_2videos.json')
-parser.add_argument("--images_dir", type=str, default="/data/jiahaoguo/dataset/gaode_6/images")
+parser.add_argument("--json_path", type=str, default='/data/jiahaoguo/datasets/gaode_6/annotations/task1_2videos.json')
+parser.add_argument("--images_dir", type=str, default="/data/jiahaoguo/datasets/gaode_6/images")
 parser.add_argument("--imagz", type=int, default=896)
 parser.add_argument("--pred_json", type=str, default="results.json")
 args = parser.parse_args()

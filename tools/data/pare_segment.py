@@ -166,9 +166,9 @@ def auto_annotate(
     with open(new_ann_path, "w") as f:
         json.dump(anno_data, f, indent=2)
 
-auto_annotate("/data/jiahaoguo/dataset/XS-VIDv2/images", 
-              ann_file="/data/jiahaoguo/dataset/XS-VIDv2/annotations/jsonv2/train.json", 
-              output_dir = "/data/jiahaoguo/dataset/XS-VIDv2/annotations/segment_yolox/", 
+auto_annotate("/data/jiahaoguo/datasets/XS-VIDv2/images", 
+              ann_file="/data/jiahaoguo/datasets/XS-VIDv2/annotations/jsonv2/train.json", 
+              output_dir = "/data/jiahaoguo/datasets/XS-VIDv2/annotations/segment_yolox/", 
               show=False,
               sam_model="sam2.1_b.pt",
             )

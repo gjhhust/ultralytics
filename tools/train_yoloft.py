@@ -7,7 +7,11 @@ from ultralytics import YOLOFT, YOLO
 # model = YOLO("config/yoloft/yoloftsv2-C-384.yaml").load("./yoloft-C-384_obj365_e7.pt")
 # model = YOLOFT("/data/shuzhengwang/project/ultralytics/runs/detect/train201/weights/last.pt")
 # model = YOLO("config/yoloft/yoloftsv2-C-384.yaml").load("./yoloft-C-384_obj365_e7.pt")
+<<<<<<< HEAD
 model = YOLO("config/yolo/yolov8_S1_DCN_dy.yaml").load("pretrain/yolov8_S1_DCN_dy/best.pt")
+=======
+model = YOLO("")
+>>>>>>> b0eddede6c78ba9d7143f398c3d138779af23d42
 
 results = model.train(data="config/dataset/XS-VIDv2_stream.yaml",
                       cfg="config/train/default.yaml",

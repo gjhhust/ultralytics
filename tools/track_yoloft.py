@@ -241,7 +241,7 @@ def track_annotate(
             json.dump(track_json_results, f)
 
 
-track_annotate(images_dir = "/data/jiahaoguo/dataset/gaode_6/true_videos/", 
+track_annotate(images_dir = "/data/jiahaoguo/datasets/gaode_6/true_videos/", 
               detect_model="runs/save/train107_yoloftS_dcn_dy_s3_t_gaode5&6_ramdominfaraed_e16_53.1/weights/best.pt",
               ann_file=None, 
               output_dir = "runs/track/", show=True)
