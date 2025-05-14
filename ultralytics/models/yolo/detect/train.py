@@ -195,8 +195,8 @@ class DetectionTrainer(BaseTrainer):
             self.tloss = None
             for i, batch in pbar:
                 self.run_callbacks("on_train_batch_start")
-                # if i < 5580:
-                #     continue
+                # if i > 10:
+                #     break
                 # Warmup
                 ni = i + nb * epoch
                 if ni <= nw:

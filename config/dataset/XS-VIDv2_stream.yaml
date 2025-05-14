@@ -10,14 +10,17 @@ split_mode: length #random all  表示视频切片策略 length时严格按照�
 train: /data/jiahaoguo/dataset/XS-VIDv2/annotations/merge_V2V1/yolo/train.txt
 train_labels_dir: /data/jiahaoguo/dataset/XS-VIDv2/annotations/merge_V2V1/yolo/
 train_images_dir: /data/jiahaoguo/dataset/XS-VIDv2/images/
+train_json_file: /data/jiahaoguo/dataset/XS-VIDv2/annotations/jsonv2/train_segment.json
 
 val: /data/jiahaoguo/dataset/XS-VIDv2/annotations/merge_V2V1/yolo/test.txt
 val_labels_dir: /data/jiahaoguo/dataset/XS-VIDv2/annotations/merge_V2V1/yolo/
 val_images_dir: /data/jiahaoguo/dataset/XS-VIDv2/images/
+val_json_file: /data/jiahaoguo/dataset/XS-VIDv2/annotations/jsonv2/test_segment.json
 
 test: /data/jiahaoguo/dataset/XS-VIDv2/annotations/merge_V2V1/yolo/test.txt
 test_labels_dir: /data/jiahaoguo/dataset/XS-VIDv2/annotations/merge_V2V1/yolo/
 test_images_dir: /data/jiahaoguo/dataset/XS-VIDv2/images/
+test_json_file: /data/jiahaoguo/dataset/XS-VIDv2/annotations/jsonv2/test_segment.json
 
 split_length: [1] #先使用10的片段训练，再50 "all"表示不切割 #{2:12, 3:8, 4:6, 5:5, 6:4}
 

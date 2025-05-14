@@ -12,6 +12,6 @@ model = YOLO("config/yolo/yolov8_S1_DCN_dy.yaml").load("pretrain/yolov8_S1_DCN_d
 results = model.train(data="config/dataset/XS-VIDv2_stream.yaml",
                       cfg="config/train/default.yaml",
                       # constrained = True,
-                      batch=30*2, epochs=25, imgsz=1024, device=[2,3],workers = 4)
+                      batch=30*2, epochs=25, imgsz=1024, device=[0,1],workers = 4)
                     # batch=6, epochs=25, imgsz=896, device=[2],workers = 6)
 # print("yoloftsv2-C-384_cbam_Focus \nload(./yolov8s.pt)  \nTrain_6_Test_gaode6")
