@@ -8,7 +8,7 @@ import os
 import numpy as np
 import torch.nn as nn
 import gc
-from ultralytics.data import build_dataloader, build_yoloft_dataset, build_video_dataloader, build_stream_dataloader, build_yoloft_val_dataset
+from ultralytics.data import build_dataloader, build_yoloft_train_dataset, build_video_dataloader, build_yoloft_val_dataset
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.models import yoloft
 from ultralytics.nn.tasks import VideoDetectionModel
@@ -60,37 +60,14 @@ class DetectionTrainer(BaseTrainer):
         """
         gs = max(int(de_parallel(self.model).stride.max() if self.model else 0), 32)
         
-        if "train_images_dir" in self.data and "train_labels_dir" in self.data:
-            if mode == "train":
-                images_dir = self.data["train_images_dir"]
-                labels_dir = self.data["train_labels_dir"]
-            elif mode == "val":
-                images_dir = self.data["val_images_dir"]
-                labels_dir = self.data["val_labels_dir"]
-            else:
-                images_dir = os.path.join(self.data["path"],self.data["images_dir"])
-                labels_dir = os.path.join(self.data["path"],self.data["labels_dir"])
+        if mode == "train":
+            return build_yoloft_train_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs)
         else:
-            images_dir = None
-            labels_dir = None
-        
-        if mode != "train":
-            return build_yoloft_val_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs,
-                                  images_dir=images_dir,
-                                  labels_dir=labels_dir)
-            
-        return build_yoloft_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs,
-                                  images_dir=images_dir,
-                                  labels_dir=labels_dir)
+            return build_yoloft_val_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs)
 
     def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train", just_dataloader = False):
         """Construct and return dataloader."""
         assert mode in {"train", "val"}, f"Mode must be 'train' or 'val', not {mode}."
-        
-        datasampler = self.data.get('datasampler', None)
-        if datasampler == "streamSampler" and mode != "train":
-            batch_size = 1
-            LOGGER.info(f"test dataloader using streamSampler and batch_size=1...")
             
         if not just_dataloader:
             with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
@@ -105,14 +82,12 @@ class DetectionTrainer(BaseTrainer):
         workers = self.args.workers if mode == "train" else self.args.workers * 2
         
         #add by guojiahao
-        datasampler = self.data.get('datasampler', None)
-        if datasampler == "streamSampler" and mode == "train":
-            return build_video_dataloader(dataset, batch_size, workers, shuffle, rank)  # return dataloader
-        elif datasampler == "streamSampler" and mode != "train":
-            return build_stream_dataloader(dataset, batch_size, workers, shuffle, rank)  # return dataloader
+        assert self.data.get('StreamVideoSampler', False), "StreamDataset must be True"
+        if mode == "train":
+            return build_video_dataloader(dataset, batch_size, workers, shuffle, rank, stack=True)  # return dataloader
         else:
-            return build_dataloader(dataset, batch_size, workers, shuffle, rank)  # normalSampler
-    
+            return build_video_dataloader(dataset, batch_size, workers, shuffle, rank, stack=False)  # return dataloader
+
     def preprocess_batch(self, batch):
         """Preprocesses a batch of images by scaling and converting to float."""
         batch["img"] = batch["img"].to(self.device, non_blocking=True).float() / 255
@@ -158,7 +133,7 @@ class DetectionTrainer(BaseTrainer):
             split_index = len(self.args.train_slit) - 1
 
         # 获取待设置的数据集长度
-        target_length = self.data["split_length"][split_index]
+        target_length = self.data["train_video_length"][split_index]
         return target_length, int(self.data["split_batch_dict"][target_length])
     
     def _do_train(self, world_size=1):
@@ -193,12 +168,10 @@ class DetectionTrainer(BaseTrainer):
         epoch = self.start_epoch
         self.optimizer.zero_grad()  # zero any resumed gradients to ensure stability on train start
         
-        datasampler = self.data.get('datasampler', None)
-        
         if isinstance(self.args.train_slit, int):
             self.args.train_slit = [self.args.train_slit]
         
-        assert len(self.args.train_slit) == len(self.data["split_length"]), "must equter"
+        assert len(self.args.train_slit) == len(self.data["train_video_length"]), "must equter"
         
         while True:
             self.epoch = epoch
@@ -209,19 +182,19 @@ class DetectionTrainer(BaseTrainer):
 
             self.model.train()
             
-            target_length, target_batch_size = self.now_length(epoch)
-            # 检查当前数据集长度是否和待设置的一样
-            if self.train_loader.dataset.length != target_length:
-                if hasattr(self.train_loader.dataset, '_train_video'):
-                    if RANK in {-1, 0}:
-                        LOGGER.info('start train video\n')
-                    self.batch_size = target_batch_size * max(world_size, 1)
-                    dataset = self.train_loader.dataset
-                    self.train_loader = self.get_dataloader(dataset, batch_size=target_batch_size, rank=LOCAL_RANK, mode="train", just_dataloader=True)
-                    self.train_loader.dataset._train_video(hyp=self.args, length=target_length)
-                # 重置训练加载器
-                self.train_loader.reset()
-            LOGGER.info(f"Training epoch {epoch} with dataset length {self.train_loader.dataset.length} and batch size: {self.train_loader.batch_size}")
+            # target_length, target_batch_size = self.now_length(epoch)
+            # # 检查当前数据集长度是否和待设置的一样
+            # if self.train_loader.dataset.length != target_length:
+            #     if hasattr(self.train_loader.dataset, '_train_video'):
+            #         if RANK in {-1, 0}:
+            #             LOGGER.info('start train video\n')
+            #         self.batch_size = target_batch_size * max(world_size, 1)
+            #         dataset = self.train_loader.dataset
+            #         self.train_loader = self.get_dataloader(dataset, batch_size=target_batch_size, rank=LOCAL_RANK, mode="train", just_dataloader=True)
+            #         self.train_loader.dataset._train_video(hyp=self.args, length=target_length)
+            #     # 重置训练加载器
+            #     self.train_loader.reset()
+            # LOGGER.info(f"Training epoch {epoch} with dataset length {self.train_loader.dataset.length} and batch size: {self.train_loader.batch_size}")
 
 
             if RANK != -1:
@@ -238,8 +211,8 @@ class DetectionTrainer(BaseTrainer):
             self.tloss = None
             for i, batch_videos in pbar:
                 self.run_callbacks("on_train_batch_start")
-                # if i < 5580:
-                #     continue
+                # if i > 10:
+                #     break
                 # Warmup
                 ni = i + nb * epoch
                 if ni <= nw:
@@ -303,7 +276,7 @@ class DetectionTrainer(BaseTrainer):
                     if self.args.plots and ni in self.plot_idx:
                         self.plot_training_samples(batch, ni)
                         
-                    if datasampler == "streamSampler" and self.args.plots:
+                    if self.data.get('StreamVideoSampler', False) and self.args.plots:
                         for b_ in batch_videos:
                             save_flag = False
                             if not save_flag and not self.save_sample_flag:  
@@ -568,7 +541,7 @@ class DetectionTrainer(BaseTrainer):
                     if self.args.plots and ni in self.plot_idx:
                         self.plot_training_samples(batch_videos[0], ni)
 
-                    if datasampler == "streamSampler" and self.args.plots:
+                    if self.data.get('StreamVideoSampler', False) and self.args.plots:
                         for b_ in batch_videos:
                             save_flag = False
                             if not save_flag and not self.save_sample_flag:  

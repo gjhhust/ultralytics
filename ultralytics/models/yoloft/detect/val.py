@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import gc
-from ultralytics.data import build_dataloader, build_yolo_dataset, converter, build_video_dataloader, build_stream_dataloader, build_yoloft_val_dataset
+from ultralytics.data import build_dataloader, build_yolo_dataset, converter, build_video_dataloader, build_yoloft_val_dataset
 from ultralytics.engine.validator import BaseValidator
 from ultralytics.utils import LOGGER, ops
 from ultralytics.utils.checks import check_requirements
@@ -163,10 +163,10 @@ class DetectionValidator(BaseValidator):
         for batch_i, batch in enumerate(bar):
             self.run_callbacks("on_val_batch_start")
             self.batch_i = batch_i
-            assert len(batch["img_metas"]) == 1, "YOLOFT val must batch size = 1"
-            if current_video_name != batch["img_metas"][0]["video_name"]:
+            assert len(batch["img"]) == 1, "YOLOFT val must batch size = 1"
+            if current_video_name != batch["sub_video_id"][0]:
                 save_fmaps = [None, None, None]
-                current_video_name = batch["img_metas"][0]["video_name"]
+                current_video_name = batch["sub_video_id"][0]
             # print(f"batch_videos: {len(batch_videos)}")
             with dt[0]:
                 batch = self.preprocess(batch)
@@ -233,8 +233,13 @@ class DetectionValidator(BaseValidator):
             and (val.endswith(f"{os.sep}val2017.txt") or val.endswith(f"{os.sep}test-dev2017.txt")))
             or ("eval_ann_json" in self.data)
         )  # is COCO
+        
         if self.is_coco:
-            with open(self.data["eval_ann_json"], 'r', encoding='utf-8') as f:
+            import json
+            self.eval_json_path = os.path.join(self.data["path"], self.data["eval_ann_json"])
+            if not os.path.exists(self.eval_json_path):
+                LOGGER.warning(f"Could not find {self.eval_json_path}, using default COCO validation set.")
+            with open(self.eval_json_path, 'r', encoding='utf-8') as f:
                 self.gt_cocodata = json.load(f)
             self.image_name_map_id = {}
             for image in self.gt_cocodata["images"]:
@@ -409,39 +414,14 @@ class DetectionValidator(BaseValidator):
             mode (str): `train` mode or `val` mode, users are able to customize different augmentations for each mode.
             batch (int, optional): Size of batches, this is for `rect`. Defaults to None.
         """
-        if "train_images_dir" in self.data and "train_labels_dir" in self.data:
-            if mode == "train":
-                images_dir = self.data["train_images_dir"]
-                labels_dir = self.data["train_labels_dir"]
-            elif mode == "val":
-                images_dir = self.data["val_images_dir"]
-                labels_dir = self.data["val_labels_dir"]
-            else:
-                images_dir = os.path.join(self.data["path"],self.data["images_dir"])
-                labels_dir = os.path.join(self.data["path"],self.data["labels_dir"])
-        else:
-            images_dir = None
-            labels_dir = None
-            
-        return build_yoloft_val_dataset(self.args, img_path, batch, self.data, mode=mode, stride=self.stride,
-                                  images_dir=images_dir,
-                                  labels_dir=labels_dir)
+        return build_yoloft_val_dataset(self.args, img_path, batch, self.data, mode=mode, stride=self.stride)
 
     def get_dataloader(self, dataset_path, batch_size):
         """Construct and return dataloader."""
-        
-        datasampler = self.data.get('datasampler', None)
-        if datasampler == "streamSampler":
-            batch_size = 1
-            LOGGER.info(f"test dataloader using streamSampler and batcj_size=1...")
-            
         dataset = self.build_dataset(dataset_path, batch=batch_size, mode="val")
         
         #add by guojiahao
-        if datasampler == "streamSampler":
-            return build_stream_dataloader(dataset, batch_size, self.args.workers, shuffle = False, rank=-1)  # return dataloader
-        else:
-            return build_dataloader(dataset, batch_size, self.args.workers, shuffle = False, rank=-1)  # normalSampler
+        return build_video_dataloader(dataset, batch_size, self.args.workers, shuffle = False, rank=-1, stack=False)  # return dataloader
 
     def plot_val_samples(self, batch, ni):
         """Plot validation image samples."""
@@ -479,9 +459,9 @@ class DetectionValidator(BaseValidator):
         ).save_txt(file, save_conf=save_conf)
 
     def from_coco_get_image_id(self,file_name_mapping_id,im_file):
-        if file_name_mapping_id:
-            return file_name_mapping_id.get(im_file, 0)
-        assert False, f"error in function from_coco_get_image_id, {im_file} is not in {self.data['eval_ann_json']}"
+        if im_file in file_name_mapping_id:
+            return file_name_mapping_id[im_file]
+        assert False, f"error in function from_coco_get_image_id, {im_file} is not in {self.eval_json_path}"
             
     def pred_to_json(self, predn, filename):
         """Serialize YOLO predictions to COCO json format."""
@@ -510,12 +490,11 @@ class DetectionValidator(BaseValidator):
         """Evaluates YOLO output in JSON format and returns performance statistics."""
         if self.args.save_json and (self.is_coco or self.is_lvis) and len(self.jdict):
             pred_json = self.save_dir / "predictions.json"  # predictions
-            # anno_json = (
-            #     self.data["path"]
-            #     / "annotations"
-            #     / ("instances_val2017.json" if self.is_coco else f"lvis_v1_{self.args.split}.json")
-            # )  # annotations
-            anno_json = Path(self.data['eval_ann_json'])  # annotations
+            anno_json = Path(self.eval_json_path) if "eval_ann_json" in self.data else (
+                self.data["path"]
+                / "annotations"
+                / ("instances_val2017.json" if self.is_coco else f"lvis_v1_{self.args.split}.json")
+            )  # annotations
             pkg = "pycocotools" if self.is_coco else "lvis"
             LOGGER.info(f"\nEvaluating {pkg} mAP using {pred_json} and {anno_json}...")
             try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb

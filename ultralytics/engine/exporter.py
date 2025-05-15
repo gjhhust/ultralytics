@@ -69,7 +69,7 @@ import numpy as np
 import torch
 
 from ultralytics.cfg import TASK2DATA, get_cfg
-from ultralytics.data import build_dataloader, build_stream_dataloader
+from ultralytics.data import build_dataloader, build_video_dataloader
 from ultralytics.data.dataset import YOLODataset, YOLOStreamDataset
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset
 from ultralytics.nn.autobackend import check_class_names, default_class_names
@@ -432,7 +432,7 @@ class Exporter:
             )
             if len(dataset) < 300:
                 LOGGER.warning(f"{prefix} WARNING ⚠️ >300 images recommended for INT8 calibration, found {n} images.")
-            return build_stream_dataloader(dataset, batch=batch, workers=0)
+            return build_video_dataloader(dataset, batch=batch, workers=0)
         else:
             dataset = YOLODataset(
                 data[self.args.split or "val"],
