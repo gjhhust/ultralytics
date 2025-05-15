@@ -8,7 +8,7 @@ import os
 import numpy as np
 import torch.nn as nn
 
-from ultralytics.data import build_dataloader, build_yolo_dataset, build_stream_dataloader
+from ultralytics.data import build_dataloader, build_yolo_dataset, build_video_dataloader
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.models import yolo
 from ultralytics.nn.tasks import DetectionModel
@@ -58,33 +58,12 @@ class DetectionTrainer(BaseTrainer):
             batch (int, optional): Size of batches, this is for `rect`. Defaults to None.
         """
         gs = max(int(de_parallel(self.model).stride.max() if self.model else 0), 32)
-        
-        if "train_images_dir" in self.data and "train_labels_dir" in self.data:
-            if mode == "train":
-                images_dir = self.data["train_images_dir"]
-                labels_dir = self.data["train_labels_dir"]
-            elif mode == "val":
-                images_dir = self.data["val_images_dir"]
-                labels_dir = self.data["val_labels_dir"]
-            else:
-                images_dir = os.path.join(self.data["path"],self.data["images_dir"])
-                labels_dir = os.path.join(self.data["path"],self.data["labels_dir"])
-        else:
-            images_dir = None
-            labels_dir = None
             
-        return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs,
-                                  images_dir=images_dir,
-                                  labels_dir=labels_dir)
+        return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs)
 
     def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train"):
         """Construct and return dataloader."""
         assert mode in {"train", "val"}, f"Mode must be 'train' or 'val', not {mode}."
-        
-        datasampler = self.data.get('datasampler', None)
-        if datasampler == "streamSampler" and mode != "train":
-            batch_size = 1
-            LOGGER.info(f"test dataloader using streamSampler and batch_size=1...")
             
         with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
             dataset = self.build_dataset(dataset_path, mode, batch_size)
@@ -95,9 +74,8 @@ class DetectionTrainer(BaseTrainer):
         workers = self.args.workers if mode == "train" else self.args.workers * 2
         
         #add by guojiahao
-        datasampler = self.data.get('datasampler', None)
-        if datasampler == "streamSampler":
-            return build_stream_dataloader(dataset, batch_size, workers, shuffle, rank)  # return dataloader
+        if self.data.get('StreamVideoSampler', False):
+            return build_video_dataloader(dataset, batch_size, self.args.workers, stack=False, shuffle = False, rank=-1)  # return dataloader
         else:
             return build_dataloader(dataset, batch_size, workers, shuffle, rank)  # normalSampler
     
@@ -255,7 +233,7 @@ class DetectionTrainer(BaseTrainer):
                     self.run_callbacks("on_batch_end")
                     if self.args.plots and ni in self.plot_idx:
                         self.plot_training_samples(batch, ni)
-                    if datasampler == "streamSampler" and self.args.plots:
+                    if self.data.get('StreamVideoSampler', False) and self.args.plots:
                         save_flag = False
                         if not save_flag and not self.save_sample_flag:  
                             video_batch_list.append(batch["img"].clone().cpu())

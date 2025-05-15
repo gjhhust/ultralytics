@@ -181,7 +181,7 @@ class VideoSampler(DistributedSampler):
         self.set_epoch(self.epoch)  # Update the epoch in the distributed sampler
 
 from typing import Iterator, List, Optional, Dict, Any
-class StreamDistributedSampler(DistributedSampler):
+class StreamDistributedSampler(distributed.DistributedSampler):
     """
     分布式或单卡视频流采样器，预先生成每个 epoch 的帧索引列表。
 
@@ -216,9 +216,11 @@ class StreamDistributedSampler(DistributedSampler):
                  rank: Optional[int] = None,
                  shuffle: bool = True,
                  seed: int = 0,
+                 stack: bool = False, # stack sub-videos into a single batch
                  drop_last: bool = False): # drop_last 参数保留用于签名兼容性
 
         self.distribute = distributed # 存储分布式模式标志
+        self.stack = stack
 
         # 根据 distribute 标志确定实际用于采样的 num_replicas 和 rank
         if self.distribute:
@@ -269,11 +271,6 @@ class StreamDistributedSampler(DistributedSampler):
         #             f"训练模式: {self.is_training}。批次大小 (用于修剪): {self.batch_size}。")
         # LOGGER.info(f"进程 {self.rank+1}/{self.num_replicas}: 周期 0 的总帧索引数: {len(self.flat_frame_indices)}")
         self._recalculate_indices()
-        # 记录重新计算的结果
-        mode_str = "分布式模式" if self.distribute else "单卡模式"
-        LOGGER.info(f"进程 {self.rank+1}/{self.num_replicas}, 周期 {self.epoch}: 在 {mode_str} 下重新计算索引完成。"
-                    f"使用了 {self._effective_total_sub_videos} 个子视频)。"
-                    f"为此副本生成的总帧索引数: {len(self.flat_frame_indices)}。")
 
     def _recalculate_indices(self) -> None:
         """
@@ -361,11 +358,18 @@ class StreamDistributedSampler(DistributedSampler):
             LOGGER.warning(f"进程 {self.rank+1}/{self.num_replicas}: 分发/修剪后没有子视频分配到此副本。")
             return
 
+        if self.stack:
+            self.flat_video_indices = replica_sub_video_indices
+            return
+        
         # 获取分配到的子视频的实际帧索引列表
-        replica_frame_lists = [self.dataset.sub_videos[sv_idx]
+        replica_frame_lists_info = [self.dataset.sub_videos[sv_idx]
                             for sv_idx in replica_sub_video_indices
                             # 再次检查索引有效性
                             if 0 <= sv_idx < len(self.dataset.sub_videos)]
+        replica_frame_lists = [[info["original_idx"] for info in sub_infos] 
+          for sub_infos in replica_frame_lists_info]
+
 
         if not replica_frame_lists:
             self.flat_frame_indices = []
@@ -420,7 +424,11 @@ class StreamDistributedSampler(DistributedSampler):
                 LOGGER.error(f"进程 {self.rank+1}: 生成的帧索引超出数据集总帧数范围。min={min_idx}, max={max_idx}, total_frames={len(self.dataset.im_files)}.")
 
 
-        
+        # 记录重新计算的结果
+        mode_str = "分布式模式" if self.distribute else "单卡模式"
+        LOGGER.info(f"进程 {self.rank+1}/{self.num_replicas}, 周期 {self.epoch}: 在 {mode_str} 下重新计算索引完成。"
+                    f"使用了 {self._effective_total_sub_videos} 个子视频 (分配给此副本 {len(replica_sub_video_indices)} 个)。"
+                    f"为此副本生成的总帧索引数: {len(self.flat_frame_indices)}。")
 
 
 
@@ -429,12 +437,18 @@ class StreamDistributedSampler(DistributedSampler):
         # 在初始化时立即计算并存储索引 (用于 Epoch 0)
         # 直接返回预先计算好的列表的迭代器
         # LOGGER.info(f"Rank {self.rank}/{self.num_replicas}, Epoch {self.epoch}: Starting iteration.")
-        return iter(self.flat_frame_indices)
+        if self.stack:
+            return iter(self.flat_video_indices)
+        else:
+            return iter(self.flat_frame_indices)
 
     def __len__(self) -> int:
         """返回此副本在此周期将生成的总帧索引数量。"""
         # 长度就是预先计算好的列表的长度
-        return len(self.flat_frame_indices)
+        if self.stack:
+            return len(self.flat_video_indices)
+        else:
+            return len(self.flat_frame_indices)
 
     def set_epoch(self, epoch: int) -> None:
         """
@@ -446,8 +460,9 @@ class StreamDistributedSampler(DistributedSampler):
         # 我们需要确保在 epoch 变化时重新计算索引。
         super().set_epoch(epoch) # 更新 self.epoch 和内部随机种子状态
         # LOGGER.info(f"Rank {self.rank}/{self.num_replicas}: Setting epoch to {epoch} and recalculating indices.")
+        self.dataset.set_epoch(epoch) # 更新数据集的 epoch
         self._recalculate_indices() # 重新计算索引以反映新的周期打乱
-            
+        
 from torch.utils.data.sampler import BatchSampler
 class InfiniteDataLoader(dataloader.DataLoader):
     """
@@ -504,17 +519,10 @@ def seed_worker(worker_id):  # noqa
     random.seed(worker_seed)
 
 
-def build_yolo_dataset(cfg, img_path, batch, data, mode="train", rect=False, stride=32, multi_modal=False,images_dir=None,
-                 labels_dir=None,):
+def build_yolo_dataset(cfg, img_path, batch, data, mode="train", rect=False, stride=32, multi_modal=False):
     """Build YOLO Dataset."""
-    # dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
-    datasetname = data.get('datasetname', 'YOLODataset')
-    if datasetname == "YOLODataset":
-        dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
-    elif datasetname in ("YOLOStreamDataset",  "YOLOVideoDataset"):
+    if data.get('StreamVideoSampler', False):
         dataset = YOLOStreamDataset
-    # elif datasetname == "YOLOVideoDataset":
-    #     dataset = YOLOVideoDataset
     else:
         dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
         
@@ -533,22 +541,14 @@ def build_yolo_dataset(cfg, img_path, batch, data, mode="train", rect=False, str
         task=cfg.task,
         classes=cfg.classes,
         data=data,
-        fraction=cfg.fraction if mode == "train" else 1.0,
-        images_dir = images_dir,
-        labels_dir = labels_dir
+        fraction=cfg.fraction if mode == "train" else 1.0
     )
     
 
-def build_yoloft_dataset(cfg, img_path, batch, data, mode="train", rect=False, stride=32, multi_modal=False,images_dir=None,
-                 labels_dir=None,):
+def build_yoloft_train_dataset(cfg, img_path, batch, data, mode="train", rect=False, stride=32, multi_modal=False):
     """Build YOLO Dataset."""
     # dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
-    datasetname = data.get('datasetname', 'YOLODataset')
-    if datasetname == "YOLODataset":
-        dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
-    elif datasetname in ("YOLOStreamDataset"):
-        dataset = YOLOStreamDataset
-    elif datasetname == "YOLOVideoDataset":
+    if data.get('StreamVideoSampler', False):
         dataset = YOLOVideoDataset
     else:
         dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
@@ -569,20 +569,14 @@ def build_yoloft_dataset(cfg, img_path, batch, data, mode="train", rect=False, s
         classes=cfg.classes,
         data=data,
         fraction=cfg.fraction if mode == "train" else 1.0,
-        images_dir = images_dir,
-        labels_dir = labels_dir
     )
     
-def build_yoloft_val_dataset(cfg, img_path, batch, data, mode="train", rect=False, stride=32, multi_modal=False,images_dir=None,
-                 labels_dir=None,):
+def build_yoloft_val_dataset(cfg, img_path, batch, data, mode="train", rect=False, stride=32, multi_modal=False):
     """Build YOLO Dataset."""
-    # dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
-    datasetname = data.get('datasetname', 'YOLODataset')
-    if datasetname == "YOLODataset":
-        dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
-    else:
+    if data.get('StreamVideoSampler', False):
         dataset = YOLOStreamDataset
-        LOGGER.info("YOLOFT Network val and test use YOLOStreamDataset")
+    else:
+        dataset = YOLOMultiModalDataset if multi_modal else YOLODataset
         
     return dataset(
         img_path=img_path,
@@ -600,8 +594,6 @@ def build_yoloft_val_dataset(cfg, img_path, batch, data, mode="train", rect=Fals
         classes=cfg.classes,
         data=data,
         fraction=cfg.fraction if mode == "train" else 1.0,
-        images_dir = images_dir,
-        labels_dir = labels_dir
     )
     
 def build_grounding(cfg, img_path, json_file, batch, mode="train", rect=False, stride=32):
@@ -646,32 +638,12 @@ def build_dataloader(dataset, batch, workers, shuffle=True, rank=-1):
     )
 
 
-def build_stream_dataloader(dataset, batch, workers, shuffle=True, rank=-1):
+def build_video_dataloader(dataset, batch, workers, shuffle=True, rank=-1, stack=False):
     """Return an InfiniteDataLoader or DataLoader for training or validation set."""
     batch = min(batch, len(dataset))
     nd = torch.cuda.device_count()  # number of CUDA devices
     nw = min(os.cpu_count() // max(nd, 1), workers)  # number of workers
-    sampler = StreamDistributedSampler(dataset, batch, seed=1, distributed=False) if rank == -1 else StreamDistributedSampler(dataset, batch, seed=1, distributed=True, shuffle=shuffle)
-    generator = torch.Generator()
-    generator.manual_seed(6148914691236517205 + RANK)
-    return InfiniteDataLoader(
-        dataset=dataset,
-        batch_size=batch,
-        shuffle=shuffle and sampler is None,
-        num_workers=nw,
-        sampler=sampler,
-        pin_memory=PIN_MEMORY,
-        collate_fn=getattr(dataset, "collate_fn", None),
-        worker_init_fn=seed_worker,
-        generator=generator,
-    )
-
-def build_video_dataloader(dataset, batch, workers, shuffle=True, rank=-1):
-    """Return an InfiniteDataLoader or DataLoader for training or validation set."""
-    batch = min(batch, len(dataset))
-    nd = torch.cuda.device_count()  # number of CUDA devices
-    nw = min(os.cpu_count() // max(nd, 1), workers)  # number of workers
-    sampler = StreamDistributedSampler(dataset, batch, seed=1, distributed=False) if rank == -1 else StreamDistributedSampler(dataset, batch, seed=1, distributed=True, shuffle=shuffle)
+    sampler = StreamDistributedSampler(dataset, batch, seed=1, stack=stack, distributed=False) if rank == -1 else StreamDistributedSampler(dataset, batch, seed=1, stack=stack, distributed=True, shuffle=shuffle)
     generator = torch.Generator()
     generator.manual_seed(6148914691236517205 + RANK)
     return InfiniteDataLoader(
