@@ -18,7 +18,7 @@ labels_dir: ./annotations/merge_V2V1/yolo
 images_dir: ./images
 
 StreamVideoSampler: True
-train_video_length: [1]
+train_video_length: [2]
 train_video_interval: 2
 
 #coco eval

@@ -73,7 +73,7 @@ from ultralytics.data import build_dataloader, build_video_dataloader
 from ultralytics.data.dataset import YOLODataset, YOLOStreamDataset
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset
 from ultralytics.nn.autobackend import check_class_names, default_class_names
-from ultralytics.nn.modules import C2f, Classify, Detect, RTDETRDecoder
+from ultralytics.nn.modules import C2f, Classify, Detect, RTDETRDecoder, DyDetect
 from ultralytics.nn.tasks import DetectionModel, SegmentationModel, WorldModel, VideoDetectionModel
 from ultralytics.utils import (
     ARM64,
@@ -289,7 +289,7 @@ class Exporter:
         for m in model.modules():
             if isinstance(m, Classify):
                 m.export = True
-            if isinstance(m, (Detect, RTDETRDecoder)):  # includes all Detect subclasses like Segment, Pose, OBB
+            if isinstance(m, (Detect, RTDETRDecoder, DyDetect)):  # includes all Detect subclasses like Segment, Pose, OBB
                 m.dynamic = self.args.dynamic
                 m.export = True
                 m.format = self.args.format
@@ -297,7 +297,7 @@ class Exporter:
             elif isinstance(m, C2f) and not is_tf_format:
                 # EdgeTPU does not support FlexSplitV while split provides cleaner ONNX graph
                 m.forward = m.forward_split
-            if isinstance(m, Detect) and imx:
+            if isinstance(m, (Detect, DyDetect)) and imx:
                 from ultralytics.utils.tal import make_anchors
 
                 m.anchors, m.strides = (
@@ -609,7 +609,7 @@ class Exporter:
 
             # Generate calibration data for integer quantization
             ignored_scope = None
-            if isinstance(self.model.model[-1], Detect):
+            if isinstance(self.model.model[-1], (Detect, DyDetect)):
                 # Includes all Detect subclasses like Segment, Pose, OBB, WorldDetect
                 head_module_name = ".".join(list(self.model.named_modules())[-1][0].split(".")[:2])
                 ignored_scope = nncf.IgnoredScope(  # ignore operations

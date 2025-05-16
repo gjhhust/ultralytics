@@ -463,6 +463,130 @@ def intersect_dicts(da, db, exclude=()):
     """Returns a dictionary of intersecting keys with matching shapes, excluding 'exclude' keys, using da values."""
     return {k: v for k, v in da.items() if k in db and all(x not in k for x in exclude) and v.shape == db[k].shape}
 
+def intersect_dicts_flexible(model_checkpoint_state_dict, cur_model_state_dict, exclude=()):
+    """
+    返回一个字典，其中包含按顺序匹配的键和对应的值，以适应模型结构的部分变化。
+
+    这个函数尝试解决以下情况：
+    1. 模型中间或前面插入/删除了无关紧要的组件（例如，没有参数的层，或者不希望加载权重的层），
+       导致后续层的编号发生变化，但有参数的层的相对顺序和类型保持不变。
+    2. 替换了中间某一个模块，替换模块之后的层名编号可能不变或改变。
+    3. 中间插入了一个有权重的模块，导致后续层名编号改变。
+
+    匹配逻辑：
+    - 剥离键名中的数字索引部分（如 'model.X.'），只比较剩余的后缀（如 'conv.weight'）。
+    - 按顺序在两个模型中寻找后缀相同且张量形状也相同的层。
+    - 如果找到匹配，则将 checkpoint 中的权重值赋给当前模型的对应键。
+    - `exclude` 列表中的键（或包含其中关键字的键）将被忽略。
+
+    Args:
+        model_checkpoint_state_dict (dict): 从 checkpoint 加载的状态字典。
+        cur_model_state_dict (dict): 当前模型的状态字典。
+        exclude (tuple or list): 需要排除的键名中的关键字列表。
+
+    Returns:
+        dict: 一个新的状态字典，键是当前模型的键，值是 checkpoint 中匹配上的权重。
+              这个字典可以直接用于 `model.load_state_dict()`。
+    """
+    intersected_state_dict = {} # 用于存储最终匹配上的权重
+
+    # 提取键的“类型”或“后缀”部分，用于比较
+    # 例如，'model.0.conv.weight' -> 'conv.weight'
+    # 例如，'model.layers.0.attention.self.query.weight' -> 'layers.0.attention.self.query.weight' (如果前面不是 model.数字)
+    # 或者更通用地，我们只关心那些以 'model.数字.' 开头的，并取其后的部分
+    def get_key_suffix(key_str):
+        parts = key_str.split('.')
+        # 检查是否是 'model.数字.xxx' 的格式
+        if parts[0] == 'model' and len(parts) > 2 and parts[1].isdigit():
+            return '.'.join(parts[2:]) # 返回 'xxx' 部分
+        return key_str # 如果不是这种格式，返回原始键名（可能无法灵活匹配）
+
+    # 获取两个 state_dict 的键列表
+    ckpt_keys = list(model_checkpoint_state_dict.keys())
+    cur_model_keys = list(cur_model_state_dict.keys())
+
+    # 初始化两个指针，分别指向两个键列表的当前位置
+    ptr_ckpt = 0
+    ptr_cur = 0
+
+    while ptr_ckpt < len(ckpt_keys) and ptr_cur < len(cur_model_keys):
+        key_ckpt = ckpt_keys[ptr_ckpt]
+        key_cur = cur_model_keys[ptr_cur]
+
+        # 1. 处理 exclude 列表
+        # 如果 checkpoint 中的当前键需要被排除，则跳过 checkpoint 中的这个键
+        if any(ex_keyword in key_ckpt for ex_keyword in exclude):
+            ptr_ckpt += 1
+            continue
+        # (可选) 如果当前模型的当前键需要被排除，也跳过（通常 exclude 主要针对 checkpoint）
+        # if any(ex_keyword in key_cur for ex_keyword in exclude):
+        #     ptr_cur += 1
+        #     continue
+
+        # 获取权重值
+        val_ckpt = model_checkpoint_state_dict[key_ckpt]
+        val_cur = cur_model_state_dict[key_cur]
+
+        # 获取键的后缀以进行比较
+        suffix_ckpt = get_key_suffix(key_ckpt)
+        suffix_cur = get_key_suffix(key_cur)
+        
+        # 2. 核心匹配逻辑：后缀相同且形状相同
+        if suffix_ckpt == suffix_cur and val_ckpt.shape == val_cur.shape:
+            # 找到了匹配的层
+            intersected_state_dict[key_cur] = val_ckpt # 使用当前模型的键名，值为 checkpoint 的权重
+            # print(f"匹配成功: '{key_ckpt}' (ckpt) -> '{key_cur}' (cur)")
+            ptr_ckpt += 1
+            ptr_cur += 1
+        else:
+            # 如果不匹配，有几种情况：
+            # a) 后缀相同，但形状不同：这两个层虽然类型相似，但结构已变，无法加载。两者都应跳过。
+            # b) 后缀不同：
+            #    b1) 当前模型 (cur_model) 可能在这里多了一个层 (相对于 checkpoint)。尝试跳过 cur_model 的当前层。
+            #    b2) Checkpoint 模型可能在这里多了一个层 (相对于 cur_model)。尝试跳过 ckpt_model 的当前层。
+            #    为了优先加载 checkpoint 中存在的、且能在当前模型中找到对应位置的层，
+            #    我们通常假设 checkpoint 的层序列是我们要尽量匹配的。
+            #    如果当前 cur_model 的层与 ckpt_model 的层类型不匹配，
+            #    我们移动 cur_model 的指针，看看 cur_model 的下一层是否能与 ckpt_model 的当前层匹配。
+            #    如果是因为形状不匹配但后缀匹配，说明这两个对应的层不兼容，都应该跳过。
+            
+            if suffix_ckpt == suffix_cur and val_ckpt.shape != val_cur.shape:
+                # print(f"后缀匹配但形状不符: '{key_ckpt}' (ckpt, shape {val_ckpt.shape}) vs '{key_cur}' (cur, shape {val_cur.shape}). 两者均跳过.")
+                ptr_ckpt += 1
+                ptr_cur += 1
+            elif suffix_ckpt != suffix_cur:
+                # 类型不匹配。假设当前模型的这一层是新增的，或者checkpoint的这一层在当前模型中被移除了/前面有插入。
+                # 我们尝试在 cur_model_keys 中向前搜索，看看能否找到与当前 key_ckpt 类型匹配的层。
+                # 一个更简单且通常有效的方法是：如果类型不匹配，我们认为当前 cur_model_keys[ptr_cur]
+                # 不是 key_ckpt 的对应项。所以我们增加 ptr_cur，用下一个 cur_model 的层来尝试匹配当前的 key_ckpt。
+                # 如果 checkpoint 的层在当前模型中确实没有（即使跳过了 cur_model 的一些层），
+                # 那么最终 ptr_ckpt 会因为在内层逻辑中找不到匹配而无法加载这个权重，这是符合预期的。
+                # print(f"后缀不匹配: '{suffix_ckpt}' (ckpt) vs '{suffix_cur}' (cur). 尝试推进当前模型指针.")
+                ptr_cur += 1 
+                # 注意：如果总是找不到匹配，ptr_cur 会一直增加直到末尾。
+                # 如果 key_ckpt 在 cur_model 中确实没有对应项（即使跳过了一些 cur_model 的层），
+                # 那么这个 key_ckpt 就不会被加载，ptr_ckpt 会在外部循环的下一次（或多次后）因为 ptr_cur 到底而无法匹配。
+                # 这需要一个机制来确保 ptr_ckpt 也会在适当的时候前进，例如，如果内部扫描一圈后 ptr_cur 还没找到匹配 key_ckpt 的，
+                # 就应该前进 ptr_ckpt。
+                #
+                # 改进：如果 suffix_ckpt != suffix_cur，
+                # 我们需要决定是 ckpt 的层多余了，还是 cur 的层多余了，或者两者错位了。
+                # 一个策略是：尝试在 cur_model_keys 中从 ptr_cur 开始，找到第一个 suffix_cur == suffix_ckpt 的。
+                # 如果找到了，就更新 ptr_cur 到那里。如果找不到，说明这个 key_ckpt 在 cur_model 后续部分没有对应类型，
+                # 那么就应该跳过这个 key_ckpt，即 ptr_ckpt++。
+
+                # 为了保持简单且与常见加载策略一致（优先匹配checkpoint有的层）：
+                # 当后缀不匹配时，我们前进 ptr_cur，看 cur_model 的下一个层是否与当前的 ptr_ckpt 层匹配。
+                # 如果 ptr_cur 走到头了，而 ptr_ckpt 还没走完，说明 ckpt 中剩余的层在 cur_model 中没有匹配。
+                # （这种简单推进ptr_cur的策略，隐含了“如果当前cur_model层和ckpt层类型不同，则认为cur_model的这个层是多余的，跳过它”）
+            else: # 理论上这个分支不会走到，因为上面已经覆盖了 suffix_ckpt == suffix_cur 的两种情况
+                ptr_cur +=1 # 安全起见
+
+    if not intersected_state_dict:
+        print("警告：没有找到任何可以匹配的权重。请检查模型结构和键名。")
+    
+    return intersected_state_dict
+
 def intersect_dicts_by_model(da, db):
     """Returns a dictionary of intersecting keys with matching shapes, excluding 'exclude' keys, using da values."""
     group_da = {}

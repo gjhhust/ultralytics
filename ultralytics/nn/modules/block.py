@@ -1987,15 +1987,15 @@ class MSTF_BLOCK(nn.Module):
         return fmaps_new+fmaps_old
 
 class MSTFv1(nn.Module):
-    def __init__(self, in_channels, dimension=1, mode="concat", width=0.25, depth=0.33):
+    def __init__(self, in_channels, dimension=1, mode="concat", width=0.25, nc=7):
         """Concatenates a list of tensors along a specified dimension."""
         super().__init__()
         self.d = dimension
+        in_channel = in_channels[0] + in_channels[1]
+        self.net_dim = int(in_channel*width)
         if mode == "concat":
             self.forward = self.forward_concat
         elif mode == "net":
-            in_channel = in_channels[0] + in_channels[1]
-            self.net_dim = int(in_channel*width)
             assert self.net_dim == in_channels[-1], f"input last feature dims must equal to now feature dims, plase set InputData:[{in_channels[-1]}]->[{self.net_dim}]"
             self.block = FDCN(ConvGRU(hidden_dim=self.net_dim, input_dim=self.net_dim), 
                                         in_channel, 
@@ -2003,8 +2003,6 @@ class MSTFv1(nn.Module):
                                         kernel_size = 3)
             self.forward = self.forward_mstf
         elif mode == "conv3d":
-            in_channel = in_channels[0] + in_channels[1]
-            self.net_dim = int(in_channel*width)
             assert self.net_dim == in_channels[-1], f"input last feature dims must equal to now feature dims, plase set InputData:[{in_channels[-1]}]->[{self.net_dim}]"
             self.block = FDCN(DepthSeparableConv3D(in_channels=self.net_dim, out_channels=self.net_dim), 
                                         in_channel, 
@@ -2014,6 +2012,8 @@ class MSTFv1(nn.Module):
             self.forward = self.forward_mstf
         else:
             raise ValueError("MSTFv1 paramter [mode] must be in [concat, net, conv3d]")
+
+        self.mask_aux_net = nn.Conv2d(self.net_dim, nc, 1) #only training mask aux net
 
     def forward_concat(self, x):
         """Forward pass for the YOLOv8 mask Proto module."""
@@ -2030,7 +2030,11 @@ class MSTFv1(nn.Module):
         x, net = self.block(input_x, net_x)
         x = x + input_x
         
-        return x, net
+        if self.training:
+            mask_aux = self.mask_aux_net(x)
+            return x, net, mask_aux
+        else:
+            return x, net
     
 import torch
 import torch.nn as nn
@@ -2329,6 +2333,14 @@ class HyperComputeModule(nn.Module):
         x = self.act(self.bn(x))
 
         return x
+    
+class Segmenter(nn.Module):
+    def __init__(self, nc=10, ch=()):
+        super(Segmenter, self).__init__()
+        self.m = nn.ModuleList(nn.Conv2d(x, nc, 1) for x in ch)  # output conv
+    
+    def forward(self, x):
+        return [self.m[i](x[i]) for i in range(len(x))]
 # if __name__ == '__main__':
 #     x = torch.rand(2, 64, 4, 7)
 #     dys = DySample(64)

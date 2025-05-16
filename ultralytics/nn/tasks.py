@@ -78,7 +78,9 @@ from ultralytics.nn.modules import (
     HyperComputeModule,
     MANet,
     MANetDCN,
-    MSTFv1
+    MSTFv1,
+    DyDetect,
+    Segmenter
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -98,6 +100,7 @@ from ultralytics.utils.torch_utils import (
     initialize_weights,
     intersect_dicts,
     intersect_dicts_by_model,
+    intersect_dicts_flexible,
     model_info,
     scale_img,
     time_sync,
@@ -276,7 +279,7 @@ class BaseModel(nn.Module):
         """
         self = super()._apply(fn)
         m = self.model[-1]  # Detect()
-        if isinstance(m, Detect):  # includes all Detect subclasses like Segment, Pose, OBB, WorldDetect
+        if isinstance(m, (Detect,DyDetect)):  # includes all Detect subclasses like Segment, Pose, OBB, WorldDetect
             m.stride = fn(m.stride)
             m.anchors = fn(m.anchors)
             m.strides = fn(m.strides)
@@ -342,7 +345,7 @@ class DetectionModel(BaseModel):
 
         # Build strides
         m = self.model[-1]  # Detect()
-        if isinstance(m, Detect):  # includes all Detect subclasses like Segment, Pose, OBB, WorldDetect
+        if isinstance(m, (Detect, DyDetect)):  # includes all Detect subclasses like Segment, Pose, OBB, WorldDetect
             s = 256  # 2x min stride
             m.inplace = self.inplace
 
@@ -433,7 +436,7 @@ class VideoDetectionModel(BaseModel):
 
         # Build strides
         m = self.model[-1]  # Detect()
-        if isinstance(m, Detect):  # includes all Detect subclasses like Segment, Pose, OBB, WorldDetect
+        if isinstance(m, (Detect, DyDetect)):  # includes all Detect subclasses like Segment, Pose, OBB, WorldDetect
             s = 512  # 2x min stride
             m.inplace = self.inplace
 
@@ -490,7 +493,7 @@ class VideoDetectionModel(BaseModel):
         features = [None, None, None]
         loss_video = []
         for i, batch_frame in enumerate(batch_video): # List of videso batch
-            preds, features = self.forward((batch_frame["img"], features))
+            preds, features, pred_masks = self.forward((batch_frame["img"], features), mask=True)
             loss_video.append(self.criterion(preds, batch_frame))
         loss, loss_item = tuple(map(sum, zip(*loss_video)))
         return (loss/len(batch_video), loss_item/len(batch_video))
@@ -512,34 +515,13 @@ class VideoDetectionModel(BaseModel):
         if isinstance(x, dict):  # for cases of training and validating while training.
             return self.loss_video(x["train_video"], *args, **kwargs)
         elif isinstance(x, (list, tuple)) and len(x) == 2:
-            self.predict(x[0], *x[1])
-            
-        return self.predict(x, *args, **kwargs)
-    
-    def forward_train_videos(self, x, *args, **kwargs):
-        """
-        Perform forward pass of the model for either training or inference.
-
-        If x is a dict, calculates and returns the loss for training. Otherwise, returns predictions for inference.
-
-        Args:
-            x (torch.Tensor | dict): Input tensor for inference, or dict with image tensor and labels for training.
-            *args (Any): Variable length argument list.
-            **kwargs (Any): Arbitrary keyword arguments.
-
-        Returns:
-            (torch.Tensor): Loss if x is a dict (training), or network predictions (inference).
-        """
-        if isinstance(x, dict):  # for cases of training and validating while training.
-            return self.loss_video(x, *args, **kwargs)
-        if isinstance(x, (list, tuple)) and len(x) == 2:
-            self.predict(x[0], *x[1])
-        # elif isinstance(x, (list, tuple)):
-        #     self._predict_video(x, *args, **kwargs)
+            return self.predict(x[0], *x[1], *args, **kwargs)
+        
+        LOGGER.warning("WARNING ⚠️ Model input is not a dict or a tuple of (img, labels), reverting to single-scale prediction.")
         return self.predict(x, *args, **kwargs)
     
     # def predict(self, x, profile=False, visualize=False, augment=False, embed=None):
-    def predict(self, x, fmap2=None, fmap1=None, fmap0=None, profile=False, visualize=False, augment=False, embed=None):
+    def predict(self, x, fmap2=None, fmap1=None, fmap0=None, profile=False, visualize=False, augment=False, embed=None, mask=False):
         """
         Perform a forward pass through the network.
 
@@ -557,7 +539,7 @@ class VideoDetectionModel(BaseModel):
             x = (x, (fmap2, fmap1, fmap0))
         if augment:
             return self._predict_augment(x)
-        return self._predict_once(x, profile, visualize, embed)
+        return self._predict_once(x, profile, visualize, embed, mask)
 
     def _predict_augment(self, x):
         """Perform augmentations on input image x and return augmented inference and train outputs."""
@@ -576,7 +558,7 @@ class VideoDetectionModel(BaseModel):
         y = self._clip_augmented(y)  # clip augmented tails
         return torch.cat(y, -1), None  # augmented inference, train
     
-    def _predict_once(self, x, profile=False, visualize=False, embed=None):
+    def _predict_once(self, x, profile=False, visualize=False, embed=None, mask=False):
         """
         Perform a forward pass through the network.
 
@@ -592,6 +574,7 @@ class VideoDetectionModel(BaseModel):
         """
         y, dt, embeddings = [], [], []  # outputs
         net = []
+        pred_masks = []
         for m in self.model:
             if m.f != -1:  # if not from previous layer
                 x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
@@ -599,6 +582,9 @@ class VideoDetectionModel(BaseModel):
                 self._profile_one_layer(m, x, dt)
             x = m(x)  # run
             if isinstance(m, MSTFv1):
+                if len(x) == 3: # mask pred loss
+                    pred_masks.append(x[2])
+                    x = x[:2]
                 net.append(x[1])
                 x = x[0]
             y.append(x if m.i in self.save else None)  # save output
@@ -608,8 +594,11 @@ class VideoDetectionModel(BaseModel):
                 embeddings.append(nn.functional.adaptive_avg_pool2d(x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
                 if m.i == max(embed):
                     return torch.unbind(torch.cat(embeddings, 1), dim=0)
-        return x, net
-    
+        if mask:
+            return x, net, pred_masks
+        else:
+            return x, net
+            
     @staticmethod
     def _descale_pred(p, flips, scale, img_size, dim=1):
         """De-scale predictions following augmented inference (inverse operation)."""
@@ -647,7 +636,7 @@ class VideoDetectionModel(BaseModel):
         model = weights["model"] if isinstance(weights, dict) else weights  # torchvision models are not dicts
         csd = model.float().state_dict()  # checkpoint state_dict as FP32
         csd_1 = intersect_dicts(csd, self.state_dict())  # intersect
-        csd_2 = intersect_dicts_by_model(csd, self.state_dict()) 
+        csd_2 = intersect_dicts_flexible(csd, self.state_dict()) 
         if len(csd_1) >= len(csd_2):
             csd = csd_1
             LOGGER.info(f"orige load more weight")
@@ -1347,11 +1336,11 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         elif m is InputData:
             c2 = args
             args = []
-        elif m in {Detect, WorldDetect, Segment, Pose, OBB, ImagePoolingAttn, v10Detect}:
+        elif m in {Detect, WorldDetect, Segment, Pose, OBB, ImagePoolingAttn, v10Detect, DyDetect, Segmenter}:
             args.append([ch[x] for x in f])
             if m is Segment:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
-            if m in {Detect, Segment, Pose, OBB}:
+            if m in {Detect, Segment, Pose, OBB, DyDetect}:
                 m.legacy = legacy
         elif m is RTDETRDecoder:  # special case, channels arg must be passed in index 1
             args.insert(1, [ch[x] for x in f])
