@@ -806,7 +806,7 @@ class AutoBackend(nn.Module):
                 nc = y[0].shape[1] - y[1].shape[1] - 4  # y = (1, 32, 160, 160), (1, 116, 8400)
                 self.names = {i: f"class{i}" for i in range(nc)}
             if len(y) == 2 and isinstance(y[1], (list, tuple)):
-                return self.from_numpy(y[0]), [self.from_numpy(x) for x in y[1]]
+                return self.from_numpy(y[0][0]) if len(y[0]) == 1 else [self.from_numpy(x) for x in y[0]], [self.from_numpy(x) for x in y[1]]
             return self.from_numpy(y[0]) if len(y) == 1 else [self.from_numpy(x) for x in y]
         else:
             return self.from_numpy(y)

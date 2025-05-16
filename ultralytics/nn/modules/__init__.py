@@ -72,7 +72,8 @@ from .block import (
     HyperComputeModule,
     MSTF_BLOCK,
     MSTFv1,
-    UpSample2XTest
+    UpSample2XTest,
+    Segmenter
 )
 from .conv import (
     CBAM,
@@ -95,7 +96,7 @@ from .conv import (
     DCNV3_conv
 )
 from .deform_conv import ModulatedDeformConv2dPack_MLU, count_modulated_deform_conv2d_pack_mlu
-from .head import OBB, Classify, Detect, Pose, RTDETRDecoder, Segment, WorldDetect, v10Detect
+from .head import OBB, Classify, Detect, Pose, RTDETRDecoder, Segment, WorldDetect, v10Detect, DyDetect
 from .transformer import (
     AIFI,
     MLP,

@@ -8,7 +8,7 @@ import os
 import numpy as np
 import torch.nn as nn
 import gc
-from ultralytics.data import build_dataloader, build_yoloft_train_dataset, build_video_dataloader, build_yoloft_val_dataset
+from ultralytics.data import build_dataloader, build_yoloft_train_dataset, build_video_dataloader, build_yolo_dataset
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.models import yoloft
 from ultralytics.nn.tasks import VideoDetectionModel
@@ -63,7 +63,7 @@ class DetectionTrainer(BaseTrainer):
         if mode == "train":
             return build_yoloft_train_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs)
         else:
-            return build_yoloft_val_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs)
+            return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs)
 
     def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train", just_dataloader = False):
         """Construct and return dataloader."""
