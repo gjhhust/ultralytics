@@ -266,7 +266,7 @@ class YOLOStreamDataset(YOLODataset):
     def __init__(self, data=None, *args, **kwargs):
         # 从 kwargs 中提取 'augment' 以决定采样策略
         # 父类 __init__ 中会设置 self.augment
-        self.is_training_augment = kwargs.get('augment', True) # 默认训练时增强
+        self.is_training_augment = kwargs['augment'] # 默认训练时增强
         self.data = data
         if "train_video_interval" in data and kwargs["augment"]:
             self.video_interval = data["train_video_interval"]
@@ -274,7 +274,7 @@ class YOLOStreamDataset(YOLODataset):
         else:
             self.video_interval = 1
             
-        self.video_length = self.data["train_video_length"][-1]
+        self.video_length = self.data.get('train_video_length', [1])[-1]
         
         self.images_dir = data.get('images_dir', 'images')
         self.images_dir = os.path.join(self.data["path"], self.images_dir)
@@ -335,7 +335,7 @@ class YOLOStreamDataset(YOLODataset):
                 elif p.is_file():  # file
                     with open(p, encoding="utf-8") as t:
                         t = t.read().strip().splitlines()
-                        parent = str(self.images_dir) + os.sep
+                        parent = str(Path(self.images_dir)) + os.sep
                         f += [x.replace("./", parent) if x.startswith("./") else x for x in t]  # local to global path
                         # F += [p.parent / x.lstrip(os.sep) for x in t]  # local to global path (pathlib)
                 else:

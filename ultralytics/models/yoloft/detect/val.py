@@ -164,7 +164,7 @@ class DetectionValidator(BaseValidator):
             self.run_callbacks("on_val_batch_start")
             self.batch_i = batch_i
             assert len(batch["img"]) == 1, "YOLOFT val must batch size = 1"
-            if current_video_name != batch["sub_video_id"][0]:
+            if current_video_name != batch["sub_video_id"][0] or self.data.get("fake_video", False):
                 save_fmaps = [None, None, None]
                 current_video_name = batch["sub_video_id"][0]
             # print(f"batch_videos: {len(batch_videos)}")
