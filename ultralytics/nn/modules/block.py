@@ -2013,7 +2013,7 @@ class MSTFv1(nn.Module):
         else:
             raise ValueError("MSTFv1 paramter [mode] must be in [concat, net, conv3d]")
 
-        self.mask_aux_net = nn.Conv2d(self.net_dim, nc, 1) #only training mask aux net
+        self.mask_aux_net = nn.Conv2d(self.net_dim, 1, 1) #only training mask aux net
 
     def forward_concat(self, x):
         """Forward pass for the YOLOv8 mask Proto module."""
@@ -2031,7 +2031,8 @@ class MSTFv1(nn.Module):
         x = x + input_x
         
         if self.training:
-            mask_aux = self.mask_aux_net(x)
+            mask_aux = self.mask_aux_net(net)
+            # mask_aux = torch.ones_like(net)
             return x, net, mask_aux
         else:
             return x, net
