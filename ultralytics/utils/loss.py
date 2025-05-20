@@ -805,7 +805,7 @@ class v8DetectionLoss:
                 pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask, support_bboxes
             )
             tiny_l = self.tiny_loss(pred_bboxes, target_bboxes)
-            loss[0] = tiny_l * 0.5 + loss[0] * 0.5
+            loss[0] = tiny_l * 0.4 + loss[0] * 0.6
         # if hasattr(self, "bbox_feature_extractor"):
         #     loss_ = self.bbox_feature_extractor(batch, target_bboxes, gt_ids)
             

@@ -349,9 +349,9 @@ class YOLOStreamDataset(YOLODataset):
             im_files = im_files[: round(len(im_files) * self.fraction)]  # retain a fraction of the dataset
         return im_files
     
-    def img2label_paths(self,img_paths):
+    def img2label_paths(self, img_paths, images_dir, labels_dir):
         # sa, sb = f'{self.images_dir}', f'{self.labels_dir}'  # /images/, /labels/ substrings
-        return [str(Path(path.replace(self.images_dir, self.labels_dir))).split('.')[0]+'.txt' for path in img_paths]
+        return [str(Path(path.replace(images_dir, labels_dir))).split('.')[0]+'.txt' for path in img_paths]
     
     def get_labels(self):
         """
@@ -362,7 +362,7 @@ class YOLOStreamDataset(YOLODataset):
         Returns:
             (List[dict]): List of label dictionaries, each containing information about an image and its annotations.
         """
-        self.label_files = self.img2label_paths(self.im_files)
+        self.label_files = self.img2label_paths(self.im_files, self.images_dir, self.labels_dir)
         cache_path = Path(self.label_files[0]).parent.with_suffix(".cache")
         try:
             cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file

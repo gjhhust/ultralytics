@@ -14,8 +14,8 @@ train: ./annotations/merge_V2V1/yolo/train.txt
 val: ./annotations/merge_V2V1/yolo/test.txt # val images (relative to 'path')  548 images
 test: ./annotations/merge_V2V1/yolo/test.txt # test images (optional)  1610 images
 
-labels_dir: ./annotations/merge_V2V1/yolo
-images_dir: ./images
+labels_dir: annotations/merge_V2V1/yolo
+images_dir: images
 
 StreamVideoSampler: True
 train_video_length: [2]
