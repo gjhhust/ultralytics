@@ -370,6 +370,7 @@ class DetectionTrainer(BaseTrainer):
         video_batch_list = []
         bbox_list = []
         batch_list_idx = []
+        masks_list = []
         cls_list = []
         self.save_sample_flag = False
         
@@ -554,16 +555,19 @@ class DetectionTrainer(BaseTrainer):
                                 bbox_list.append(b_["bboxes"].clone().cpu())
                                 batch_list_idx.append(b_["batch_idx"].clone().cpu())
                                 cls_list.append(b_['cls'].squeeze(-1).clone().cpu())
+                                if "masks" in b_:
+                                    masks_list.append(b_["gt_mask"].clone().cpu())
                                 if len(video_batch_list) == 80: #save 50 frames
                                     save_flag = True
                             if save_flag and not self.save_sample_flag:
                                 self.save_sample_flag = True
-                                self.plot_training_video_samples(video_batch_list,b_,bbox_list,batch_list_idx,cls_list)
-                                del video_batch_list,bbox_list,batch_list_idx,cls_list
+                                self.plot_training_video_samples(video_batch_list,b_,bbox_list,batch_list_idx,cls_list, masks_list)
+                                del video_batch_list,bbox_list,batch_list_idx,cls_list, masks_list
                                 video_batch_list = []
                                 bbox_list = []
                                 batch_list_idx = []
                                 cls_list = []
+                                masks_list = []
                                 self.save_sample_flag = True #only plot once
                                 
                 self.run_callbacks("on_train_batch_end")
@@ -672,12 +676,13 @@ class DetectionTrainer(BaseTrainer):
             "Size",
         )
 
-    def plot_training_video_samples(self, video_batch_list,batch,bbox_list,batch_list_idx,cls_list):
+    def plot_training_video_samples(self, video_batch_list,batch,bbox_list,batch_list_idx,cls_list,masks_list=[]):
         """Plots training samples with their annotations."""
         plot_video(video_batch_list,
                     batch_list_idx=batch_list_idx,
                     cls_list=cls_list,
                     bboxes_list=bbox_list,
+                    masks_list = masks_list,
                     paths=None,
                     fname=self.save_dir / f'train_batch.mp4',
                     on_plot=self.on_plot)
@@ -689,6 +694,7 @@ class DetectionTrainer(BaseTrainer):
             batch_idx=batch["batch_idx"],
             cls=batch["cls"].squeeze(-1),
             bboxes=batch["bboxes"],
+            masks=batch["masks"] if "masks" in batch else np.zeros(0, dtype=np.uint8),
             paths=batch["im_file"],
             fname=self.save_dir / f"train_batch{ni}.jpg",
             on_plot=self.on_plot,

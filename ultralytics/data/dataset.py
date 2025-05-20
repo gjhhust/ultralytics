@@ -11,6 +11,7 @@ import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import ConcatDataset
+from ultralytics.data.utils import polygon2mask
 
 from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr
 from ultralytics.utils.ops import resample_segments
@@ -252,6 +253,7 @@ from typing import List, Dict, Any, Optional
 import glob, os
 from copy import deepcopy
 from ultralytics.data.utils import FORMATS_HELP_MSG, HELP_URL, IMG_FORMATS
+from tqdm import tqdm
 class YOLOStreamDataset(YOLODataset):
     """
     用于加载视频数据的YOLO数据集类。
@@ -263,7 +265,7 @@ class YOLOStreamDataset(YOLODataset):
         video_interval (int): 采样两个连续子视频之间的帧间隔 (训练时)。
         *args, **kwargs: 传递给父类 YOLODataset 的参数。
     """
-    def __init__(self, data=None, *args, **kwargs):
+    def __init__(self, data=None, hyp=None, *args, **kwargs):
         # 从 kwargs 中提取 'augment' 以决定采样策略
         # 父类 __init__ 中会设置 self.augment
         self.is_training_augment = kwargs['augment'] # 默认训练时增强
@@ -280,13 +282,38 @@ class YOLOStreamDataset(YOLODataset):
         self.images_dir = os.path.join(self.data["path"], self.images_dir)
         self.labels_dir = data.get('labels_dir', 'labels')
         self.labels_dir = os.path.join(self.data["path"], self.labels_dir)
+        self.segment_labels_dir = data.get('segment_labels_dir', None)
+        self.segment_labels_dir = os.path.join(self.data["path"], self.segment_labels_dir) if self.segment_labels_dir else None
         
-        super().__init__(*args,data=data, **kwargs) # 调用 YOLODataset 的初始化
+        super().__init__(*args,data=data, hyp=hyp, **kwargs) # 调用 YOLODataset 的初始化
 
         self.epoch = 0
         # self.im_files 和 self.labels 已经由父类填充
         # self.ni 是总图像（帧）数
-
+        
+        # 模仿get_labels()，获取单独的segment_labels，然后合并
+        if self.segment_labels_dir is not None:
+            LOGGER.info(f"{self.prefix}Loading segment labels from {self.segment_labels_dir}")
+            self.use_segments = True
+            self.transforms = self.build_transforms(hyp=hyp)
+            
+            segment_labels = self.get_segment_labels()
+            
+            segment_labels_map = {}
+            for label in segment_labels:
+                segment_labels_map[label["im_file"]] = label["segments"]
+            
+            for label in self.labels:
+                if label["im_file"] in segment_labels_map:
+                    if len(label["cls"]) > len(segment_labels_map[label["im_file"]]):
+                        # LOGGER.warning(f"Number of segments in {label['im_file']} does not match number of bboxes. Skipping.")
+                        continue
+                    label["segments"] = segment_labels_map[label["im_file"]][:len(label["cls"])]
+        elif "segment" in self.labels_dir:
+            self.use_segments = True
+            self.transforms = self.build_transforms(hyp=hyp)
+            LOGGER.warning(f"{self.prefix}Using segment data. ")
+        
         self.sub_videos: List[List[int]] = []  # 存储每个子视频的帧索引(相对于原始self.im_files)
         self._organize_videos_and_subsample(self.video_length)
 
@@ -403,6 +430,135 @@ class YOLOStreamDataset(YOLODataset):
             LOGGER.warning(f"Labels are missing or empty in {cache_path}, training may not work correctly. {HELP_URL}")
         return labels
     
+    def cache_segment_labels(self, segment_label_files, path=Path("./labels.cache")):
+        """
+        Cache dataset labels, check images and read shapes.
+
+        Args:
+            path (Path): Path where to save the cache file. Default is Path('./labels.cache').
+
+        Returns:
+            (dict): labels.
+        """
+        x = {"labels": []}
+        nm, nf, ne, nc, msgs = 0, 0, 0, 0, []  # number missing, found, empty, corrupt, messages
+        desc = f"{self.prefix}Scanning {path.parent / path.stem}..."
+        total = len(self.im_files)
+        nkpt, ndim = self.data.get("kpt_shape", (0, 0))
+        if self.use_keypoints and (nkpt <= 0 or ndim not in {2, 3}):
+            raise ValueError(
+                "'kpt_shape' in data.yaml missing or incorrect. Should be a list with [number of "
+                "keypoints, number of dims (2 for x,y or 3 for x,y,visible)], i.e. 'kpt_shape: [17, 3]'"
+            )
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(
+                func=verify_image_label,
+                iterable=zip(
+                    self.im_files,
+                    segment_label_files,
+                    repeat(self.prefix),
+                    repeat(self.use_keypoints),
+                    repeat(len(self.data["names"])),
+                    repeat(nkpt),
+                    repeat(ndim),
+                ),
+            )
+            pbar = TQDM(results, desc=desc, total=total)
+            for im_file, lb, shape, segments, keypoint, nm_f, nf_f, ne_f, nc_f, msg in pbar:
+                nm += nm_f
+                nf += nf_f
+                ne += ne_f
+                nc += nc_f
+                if im_file:
+                    x["labels"].append(
+                        {
+                            "im_file": im_file,
+                            "shape": shape,
+                            "cls": lb[:, 0:1],  # n, 1
+                            "bboxes": lb[:, 1:],  # n, 4
+                            "segments": segments,
+                            "keypoints": keypoint,
+                            "normalized": True,
+                            "bbox_format": "xywh",
+                        }
+                    )
+                if msg:
+                    msgs.append(msg)
+                pbar.desc = f"{desc} {nf} images, {nm + ne} backgrounds, {nc} corrupt"
+            pbar.close()
+
+        if msgs:
+            LOGGER.info("\n".join(msgs))
+        if nf == 0:
+            LOGGER.warning(f"{self.prefix}WARNING ⚠️ No labels found in {path}. {HELP_URL}")
+        x["hash"] = get_hash(segment_label_files + self.im_files)
+        x["results"] = nf, nm, ne, nc, len(self.im_files)
+        x["msgs"] = msgs  # warnings
+        save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
+        return x
+
+    def get_segment_labels(self):
+        """使用segment_labels更新self.labels"""
+        segment_label_files = self.img2label_paths(self.im_files, self.images_dir, self.segment_labels_dir)
+        cache_path = Path(segment_label_files[0]).parent.with_suffix(".cache")
+        try:
+            cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file
+            assert cache["version"] == DATASET_CACHE_VERSION  # matches current version
+            assert cache["hash"] == get_hash(segment_label_files + self.im_files)  # identical hash
+        except (FileNotFoundError, AssertionError, AttributeError):
+            cache, exists = self.cache_segment_labels(segment_label_files, cache_path), False  # run cache ops
+
+        # Display cache
+        nf, nm, ne, nc, n = cache.pop("results")  # found, missing, empty, corrupt, total
+        if exists and LOCAL_RANK in {-1, 0}:
+            d = f"Scanning {cache_path}... {nf} images, {nm + ne} backgrounds, {nc} corrupt"
+            TQDM(None, desc=self.prefix + d, total=n, initial=n)  # display results
+            if cache["msgs"]:
+                LOGGER.info("\n".join(cache["msgs"]))  # display warnings
+
+        # Read cache
+        [cache.pop(k) for k in ("hash", "version", "msgs")]  # remove items
+        labels = cache["labels"]
+        if not labels:
+            LOGGER.warning(f"WARNING ⚠️ No images found in {cache_path}, training may not work correctly. {HELP_URL}")
+        self.im_files = [lb["im_file"] for lb in labels]  # update im_files
+
+        # Check if the dataset is all boxes or all segments
+        lengths = ((len(lb["cls"]), len(lb["bboxes"]), len(lb["segments"])) for lb in labels)
+        len_cls, len_boxes, len_segments = (sum(x) for x in zip(*lengths))
+        if len_segments and len_boxes != len_segments:
+            LOGGER.warning(
+                f"WARNING ⚠️ Box and segment counts should be equal, but got len(segments) = {len_segments}, "
+                f"len(boxes) = {len_boxes}. To resolve this only boxes will be used and all segments will be removed. "
+                "To avoid this please supply either a detect or segment dataset, not a detect-segment mixed dataset."
+            )
+            # for lb in labels:
+            #     lb["segments"] = []
+        if len_cls == 0:
+            LOGGER.warning(f"WARNING ⚠️ No labels found in {cache_path}, training may not work correctly. {HELP_URL}")
+        return labels
+    
+    def get_mask_labels(self, cur_masks, prev_masks=None, prev_value = 1.0):
+        '''
+        作用: 获取当前帧和前一帧的mask并集 (快速方法)。
+        Args:
+            cur_masks (torch.Tensor): 当前帧的masks，形状为 [1, H, W]，非零值将被视为前景。
+            prev_masks (torch.Tensor, optional): 前一帧的masks，形状为 [1, H, W]，非零值将被视为前景。默认为 None。
+        Returns:
+            torch.Tensor: 合并后的mask，形状为 [1, H, W]，包含 0 和 1。
+        '''
+        cur_masks[cur_masks != 0] = 1.0
+        combined_mask = cur_masks.float()
+
+        if prev_masks is not None:
+            prev_masks[prev_masks != 0] = prev_value
+            combined_mask += prev_masks.float()
+
+        # 将所有大于 0 的值都视为 1 (前景)，0 值保持 0 (背景)
+        combined_mask = torch.clamp(combined_mask, min=0, max=1)
+
+        return combined_mask
+    
     def _organize_videos_and_subsample(self, video_length):
         """
         识别原始视频，并根据 video_length 和 video_interval 将它们划分为子视频。
@@ -424,8 +580,9 @@ class YOLOStreamDataset(YOLODataset):
             # 按帧名排序，确保帧的顺序正确
             # 假设帧名格式为 'frame_xxxxxxx.jpg' 或类似，可以直接按字符串排序
             frames_info.sort(key=lambda x: x["name"])
-            
+
             original_videos_interval = frames_info[::self.video_interval]
+            
             num_frames_in_original_video = len(original_videos_interval)
 
             if num_frames_in_original_video == 0:
@@ -503,6 +660,8 @@ class YOLOVideoDataset(YOLOStreamDataset):
             trans_dict = self.transforms(orige_dict.copy())
             trans_dict["sub_video_frame_id"] = frame["sub_video_frame_id"]
             trans_dict["sub_video_id"] = frame["sub_video_id"]
+            trans_dict["gt_mask"] = self.get_mask_labels(trans_dict["masks"], 
+                                                         prev_masks=video_trans_dict[-1]["masks"] if i > 0 else None)
             
             video_trans_dict.append(trans_dict)
         return video_trans_dict  
@@ -522,7 +681,7 @@ class YOLOVideoDataset(YOLOStreamDataset):
                 value = values[i]
                 if k == "img":
                     value = torch.stack(value, 0)
-                if k in {"masks", "keypoints", "bboxes", "cls", "segments", "obb"}:
+                if k in {"masks", "keypoints", "bboxes", "cls", "segments", "obb", "gt_mask"}:
                     value = torch.cat(value, 0)
                 new_batch[k] = value
             new_batch["batch_idx"] = list(new_batch["batch_idx"])

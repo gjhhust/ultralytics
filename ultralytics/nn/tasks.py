@@ -494,7 +494,7 @@ class VideoDetectionModel(BaseModel):
         loss_video = []
         for i, batch_frame in enumerate(batch_video): # List of videso batch
             preds, features, pred_masks = self.forward((batch_frame["img"], features), mask=True)
-            loss_video.append(self.criterion(preds, batch_frame))
+            loss_video.append(self.criterion(preds, batch_frame, pred_masks=pred_masks))
         loss, loss_item = tuple(map(sum, zip(*loss_video)))
         return (loss/len(batch_video), loss_item/len(batch_video))
         

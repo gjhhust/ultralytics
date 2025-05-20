@@ -741,9 +741,9 @@ class v8DetectionLoss:
             # pred_dist = (pred_dist.view(b, a, c // 4, 4).softmax(2) * self.proj.type(pred_dist.dtype).view(1, 1, -1, 1)).sum(2)
         return dist2bbox(pred_dist, anchor_points, xywh=False)
 
-    def __call__(self, preds, batch):
+    def __call__(self, preds, batch, pred_masks=None):
         """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""
-        loss = torch.zeros(3, device=self.device)  # box, cls, dfl
+        loss = torch.zeros(4, device=self.device)  # box, cls, dfl
         feats = preds[1] if isinstance(preds, tuple) else preds
         pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
             (self.reg_max * 4, self.nc), 1
@@ -806,6 +806,10 @@ class v8DetectionLoss:
             )
             tiny_l = self.tiny_loss(pred_bboxes, target_bboxes)
             loss[0] = tiny_l * 0.4 + loss[0] * 0.6
+            
+            if "gt_mask" in batch:
+                lpixl, larea, ldist = self.compute_loss_seg(pred_masks, batch["gt_mask"].to(self.device))
+                loss[3] = lpixl + larea + ldist
         # if hasattr(self, "bbox_feature_extractor"):
         #     loss_ = self.bbox_feature_extractor(batch, target_bboxes, gt_ids)
             
@@ -813,9 +817,77 @@ class v8DetectionLoss:
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
+        loss[3] *= 1.0  # box gain
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
+    def compute_loss_seg(self, pred_masks, masks):
+        device = masks.device
+        masks = masks.unsqueeze(1)  # add channel dimension
+        lpixl, larea, ldist = torch.zeros(1, device=device), torch.zeros(1, device=device), \
+                              torch.zeros(1, device=device)
+        
+        for p in pred_masks:
+            # weight = None
+            batch_size, _, mask_h, mask_w = p.shape  # batch size, number of masks, mask height, mask width
+            if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample
+                masks_ = F.interpolate(masks, (mask_h, mask_w), mode="nearest")
+                
+            lpixl += F.binary_cross_entropy_with_logits(p, masks_)
+            larea += self.dice_loss(p, masks_)
+            ldist += self.sigmoid_focal_loss(p, masks_) * 20
+        
+        # larea += self.quality_dice_loss(p, masks, weight=weight)
+        # ldist += self.sigmoid_quality_focal_loss(p, masks, weight=weight) * 20
+        
+        return lpixl/(len(pred_masks) + 1e-6), larea/(len(pred_masks) + 1e-6), ldist/(len(pred_masks) + 1e-6)
+
+    @staticmethod
+    def dice_loss(inputs, targets):
+        """
+        Compute the DICE loss, similar to generalized IOU for masks
+        Args:
+            inputs: A float tensor of arbitrary shape.
+                    The predictions for each example.
+            targets: A float tensor with the same shape as inputs. Stores the binary
+                    classification label for each element in inputs
+                    (0 for the negative class and 1 for the positive class).
+        """
+        inputs = inputs.sigmoid().flatten(1)
+        targets = targets.flatten(1)
+        numerator = 2 * (inputs * targets).sum(-1)
+        denominator = inputs.sum(-1) + targets.sum(-1)
+        loss = 1 - (numerator + 1) / (denominator + 1)
+        return loss.mean()
+
+    @staticmethod
+    def sigmoid_focal_loss(inputs, targets, alpha: float = 0.25, gamma: float = 2):
+        """
+        Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
+        Args:
+            inputs: A float tensor of arbitrary shape.
+                    The predictions for each example.
+            targets: A float tensor with the same shape as inputs. Stores the binary
+                    classification label for each element in inputs
+                    (0 for the negative class and 1 for the positive class).
+            alpha: (optional) Weighting factor in range (0,1) to balance
+                    positive vs negative examples. Default = -1 (no weighting).
+            gamma: Exponent of the modulating factor (1 - p_t) to
+                balance easy vs hard examples.
+        Returns:
+            Loss tensor
+        """
+        prob = inputs.sigmoid()
+        ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+        p_t = prob * targets + (1 - prob) * (1 - targets)
+        loss = ce_loss * ((1 - p_t) ** gamma)
+
+        if alpha >= 0:
+            alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+            loss = alpha_t * loss
+
+        return loss.mean()
+    
 
 class v8SegmentationLoss(v8DetectionLoss):
     """Criterion class for computing training losses."""
