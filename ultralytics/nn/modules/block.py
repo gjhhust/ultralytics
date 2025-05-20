@@ -2031,13 +2031,8 @@ class MSTFv1(nn.Module):
         x = x + input_x
         
         if self.training:
-<<<<<<< HEAD
-            # mask_aux = self.mask_aux_net(x)
-            mask_aux = torch.ones_like(x)
-=======
             mask_aux = self.mask_aux_net(net)
             # mask_aux = torch.ones_like(net)
->>>>>>> 0c16d7ea6cbb06d352982980208d591150318ebe
             return x, net, mask_aux
         else:
             return x, net
