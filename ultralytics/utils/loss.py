@@ -808,8 +808,8 @@ class v8DetectionLoss:
             loss[0] = tiny_l * 0.4 + loss[0] * 0.6
             
             if "gt_mask" in batch:
-                lpixl, larea, ldist = self.compute_loss_seg(pred_masks, batch["gt_mask"].to(self.device))
-                loss[3] = lpixl + larea + ldist
+                lpixl, larea, ldist = self.compute_loss_seg(pred_masks, batch["gt_mask"].to(self.device), target_bboxes, fg_mask)
+                loss[3] = lpixl + larea*5 + ldist*10
         # if hasattr(self, "bbox_feature_extractor"):
         #     loss_ = self.bbox_feature_extractor(batch, target_bboxes, gt_ids)
             
@@ -817,33 +817,63 @@ class v8DetectionLoss:
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
-        loss[3] *= 1.0  # box gain
+        loss[3] *= 4.0  # box gain
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
-    def compute_loss_seg(self, pred_masks, masks):
+    @staticmethod
+    def crop_loss(masks, mxyxy, marea, fg_mask):
+        """
+        It takes a mask and bounding boxes, and returns a mask that is cropped to the bounding boxes.
+
+        Args:
+            masks (torch.Tensor): [B, 1, H, W] tensor of masks
+            boxes (torch.Tensor): [B, n, 4] tensor of bbox coordinates in relative point form
+
+        Returns:
+            (torch.Tensor): The masks are being cropped to the bounding boxes, shape [B, n, H, W].
+        """
+        loss = torch.zeros(1, device=masks.device)
+        for i, single_i in enumerate(zip(fg_mask, masks, mxyxy, marea)):
+            fg_mask_i, loss_i, mxyxy_i, marea_i = single_i
+            loss += (crop_mask(loss_i, mxyxy_i[fg_mask_i]).mean(dim=(1, 2)) / marea_i[fg_mask_i]).sum()
+        return loss
+
+    def compute_loss_seg(self, pred_masks, masks, target_bboxes, fg_mask):
         device = masks.device
         masks = masks.unsqueeze(1)  # add channel dimension
         lpixl, larea, ldist = torch.zeros(1, device=device), torch.zeros(1, device=device), \
-                              torch.zeros(1, device=device)
-        
-        for p in pred_masks:
-            # weight = None
-            batch_size, _, mask_h, mask_w = p.shape  # batch size, number of masks, mask height, mask width
+                                    torch.zeros(1, device=device)
+
+        for p in pred_masks: #list of predicted masks, [[B,1,H1,W1], [B,1,H2,W2],...]
+            batch_size, _, mask_h, mask_w = p.shape
+            imgsz = torch.tensor([mask_h, mask_w], device=device, dtype=torch.float32)
+            target_bboxes_normalized = target_bboxes / imgsz[[1, 0, 1, 0]]
+            # Normalize to mask size
+            mxyxy = target_bboxes_normalized * torch.tensor([mask_w, mask_h, mask_w, mask_h], device=device).unsqueeze(0) #[B, n, 4]
+            marea = xyxy2xywh(mxyxy)[..., 2:].prod(2).unsqueeze(-1) # [B, n, 1]
+
             if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample
-                masks_ = F.interpolate(masks, (mask_h, mask_w), mode="nearest")
-                
-            lpixl += F.binary_cross_entropy_with_logits(p, masks_)
-            larea += self.dice_loss(p, masks_)
-            ldist += self.sigmoid_focal_loss(p, masks_) * 20
-        
-        # larea += self.quality_dice_loss(p, masks, weight=weight)
-        # ldist += self.sigmoid_quality_focal_loss(p, masks, weight=weight) * 20
-        
-        return lpixl/(len(pred_masks) + 1e-6), larea/(len(pred_masks) + 1e-6), ldist/(len(pred_masks) + 1e-6)
+                masks_resized = F.interpolate(masks, (mask_h, mask_w), mode="nearest")
+            else:
+                masks_resized = masks
+
+            # Calculate per-pixel losses
+            loss_pixl = F.binary_cross_entropy_with_logits(p, masks_resized, reduction="none") # [B, 1, H, W]
+            loss_area = self.dice_loss(p, masks_resized, per_image=True) # [B, 1, H, W]
+            loss_dist = self.sigmoid_focal_loss(p, masks_resized, reduction="none") # [B, 1, H, W]
+
+            # Crop losses to the GT mask area
+            lpixl += self.crop_loss(loss_pixl, mxyxy, marea, fg_mask)
+            larea += self.crop_loss(loss_area, mxyxy, marea, fg_mask)
+            ldist += self.crop_loss(loss_dist, mxyxy, marea, fg_mask) 
+
+        return lpixl / (fg_mask.sum()), \
+               larea / (fg_mask.sum()), \
+               ldist / (fg_mask.sum())
 
     @staticmethod
-    def dice_loss(inputs, targets):
+    def dice_loss(inputs, targets, per_image=False):
         """
         Compute the DICE loss, similar to generalized IOU for masks
         Args:
@@ -852,16 +882,18 @@ class v8DetectionLoss:
             targets: A float tensor with the same shape as inputs. Stores the binary
                     classification label for each element in inputs
                     (0 for the negative class and 1 for the positive class).
+            per_image (bool): If True, return the loss per image element, not the mean.
         """
-        inputs = inputs.sigmoid().flatten(1)
-        targets = targets.flatten(1)
-        numerator = 2 * (inputs * targets).sum(-1)
-        denominator = inputs.sum(-1) + targets.sum(-1)
+        inputs = inputs.sigmoid()
+        numerator = 2 * (inputs * targets)
+        denominator = inputs + targets
         loss = 1 - (numerator + 1) / (denominator + 1)
-        return loss.mean()
+        if per_image:
+            return loss
+        return loss.mean() # Return mean over batch and spatial dimensions
 
     @staticmethod
-    def sigmoid_focal_loss(inputs, targets, alpha: float = 0.25, gamma: float = 2):
+    def sigmoid_focal_loss(inputs, targets, alpha: float = 0.25, gamma: float = 2, reduction="mean"):
         """
         Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
         Args:
@@ -873,7 +905,11 @@ class v8DetectionLoss:
             alpha: (optional) Weighting factor in range (0,1) to balance
                     positive vs negative examples. Default = -1 (no weighting).
             gamma: Exponent of the modulating factor (1 - p_t) to
-                balance easy vs hard examples.
+                    balance easy vs hard examples.
+            reduction (str): Specifies the reduction to apply to the output:
+                'none' | 'mean' | 'sum'. 'none': no reduction will be applied,
+                'mean': the sum of the output will be divided by the number of
+                elements in the output, 'sum': the output will be summed.
         Returns:
             Loss tensor
         """
@@ -886,9 +922,13 @@ class v8DetectionLoss:
             alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
             loss = alpha_t * loss
 
-        return loss.mean()
+        if reduction == "none":
+            return loss
+        elif reduction == "mean":
+            return loss.mean()
+        elif reduction == "sum":
+            return loss.sum()
     
-
 class v8SegmentationLoss(v8DetectionLoss):
     """Criterion class for computing training losses."""
 
