@@ -557,6 +557,8 @@ class DetectionTrainer(BaseTrainer):
                                 cls_list.append(b_['cls'].squeeze(-1).clone().cpu())
                                 if "masks" in b_:
                                     masks_list.append(b_["gt_mask"].clone().cpu())
+                                else:
+                                    masks_list.append(np.zeros(0, dtype=np.uint8))
                                 if len(video_batch_list) == 80: #save 50 frames
                                     save_flag = True
                             if save_flag and not self.save_sample_flag:

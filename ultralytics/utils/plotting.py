@@ -1011,6 +1011,7 @@ def plot_video(
     batch_list_idx,
     cls_list,
     bboxes_list,
+    masks_list,
     confs: Optional[Union[torch.Tensor, np.ndarray]] = None,
     masks: Union[torch.Tensor, np.ndarray] = np.zeros(0, dtype=np.uint8),
     kpts: Union[torch.Tensor, np.ndarray] = np.zeros((0, 51), dtype=np.float32),
@@ -1058,6 +1059,7 @@ def plot_video(
         bboxes = bboxes_list[k]
         batch_idx = batch_list_idx[k]
         cls = cls_list[k]
+        masks = masks_list[k]
         if isinstance(images, torch.Tensor):
             images = images.cpu().float().numpy()
         if isinstance(cls, torch.Tensor):
