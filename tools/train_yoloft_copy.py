@@ -10,10 +10,10 @@ model = YOLOFT("config/yoloft_xs_ivd/yolov8s_ftv1_dcn_dy.yaml").load("pretrain/y
 
 results = model.train(data="config/dataset/XS-VIDv2.yaml",
                       cfg="config/train/default.yaml",
-                      batch=13*2, epochs=25, imgsz=1024, device=[2,3],workers=4)
+                      batch=12*2, epochs=25, imgsz=1024, device=[0,1],workers=4)
 
 # results = model.train(data="config/dataset/Train_5&6_Test_14569_single.yaml",
 #                       cfg="config/train/gaode_train_single.yaml",
 #                       batch=34*2, epochs=28, imgsz=896, device=[0,1],workers = 6)
-print("yolov8s_ftv1_dcn_dy  maskloss1.0  nc=1  prev_value=0.5")
+print("yolov8s_ftv1_dcn_dy  maskloss 4.0(lpixl + 5larea + 10*ldist)  nc=1  prev_value=1.0, crop")
   

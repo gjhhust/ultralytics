@@ -662,7 +662,7 @@ class YOLOVideoDataset(YOLOStreamDataset):
             trans_dict["sub_video_id"] = frame["sub_video_id"]
             trans_dict["gt_mask"] = self.get_mask_labels(trans_dict["masks"], 
                                                          prev_masks=video_trans_dict[-1]["masks"] if i > 0 else None,
-                                                         prev_value=0.5)
+                                                         prev_value=1.0)
             
             video_trans_dict.append(trans_dict)
         return video_trans_dict  
