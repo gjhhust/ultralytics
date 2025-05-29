@@ -426,6 +426,8 @@ class NWDLoss(nn.Module):
             reduction=reduction,
             avg_factor=avg_factor,
             **kwargs)
+        if reduction == "mean":
+            loss = loss.mean()
         return loss
     
 class SAFitLoss(nn.Module):
@@ -712,6 +714,7 @@ class v8DetectionLoss:
         self.bbox_loss = BboxLoss_trend(m.reg_max).to(device)
         print(f"Using SAFitLoss for bbox loss")
         self.tiny_loss = SAFitLoss(loss_weight=1.0).to(device)
+        self.nwd_loss = NWDLoss(loss_weight=1.0).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 
     def preprocess(self, targets, batch_size, scale_tensor):
@@ -817,7 +820,7 @@ class v8DetectionLoss:
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
-        loss[3] *= 1.0  # box gain
+        loss[3] *= 7.5  # box gain
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
@@ -860,13 +863,13 @@ class v8DetectionLoss:
 
             # Calculate per-pixel losses
             loss_pixl = F.binary_cross_entropy_with_logits(p, masks_resized, reduction="none") # [B, 1, H, W]
-            loss_area = self.dice_loss(p, masks_resized, per_image=True) # [B, 1, H, W]
-            loss_dist = self.sigmoid_focal_loss(p, masks_resized, reduction="none") # [B, 1, H, W]
+            # loss_area = self.dice_loss(p, masks_resized, per_image=True) # [B, 1, H, W]
+            # loss_dist = self.sigmoid_focal_loss(p, masks_resized, reduction="none") # [B, 1, H, W]
 
             # Crop losses to the GT mask area
             lpixl += self.crop_loss(loss_pixl, mxyxy, marea, fg_mask)
-            larea += self.crop_loss(loss_area, mxyxy, marea, fg_mask)
-            ldist += self.crop_loss(loss_dist, mxyxy, marea, fg_mask) 
+            # larea += self.crop_loss(loss_area, mxyxy, marea, fg_mask)
+            # ldist += self.crop_loss(loss_dist, mxyxy, marea, fg_mask) 
 
         return lpixl / (fg_mask.sum()), \
                larea / (fg_mask.sum()), \

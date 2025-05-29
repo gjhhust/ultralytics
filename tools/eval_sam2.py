@@ -109,8 +109,8 @@ def process_frames_in_directory(images_dir, annotation_file):
 
 
 if __name__ == "__main__":
-    images_dir = "/data/shuzhengwang/datasets/XS-VID/images"
-    annotation_file = "/data/shuzhengwang/datasets/XS-VID/annotations/test.json"
+    images_dir = "/data/jiahaoguo/datasets/XS-VID/images"
+    annotation_file = "/data/jiahaoguo/datasets/XS-VID/annotations/test.json"
     process_frames_in_directory(images_dir, annotation_file)
     
     

@@ -164,7 +164,7 @@ class DetectionValidator(BaseValidator):
             self.run_callbacks("on_val_batch_start")
             self.batch_i = batch_i
             assert len(batch["img"]) == 1, "YOLOFT val must batch size = 1"
-            if current_video_name != batch["sub_video_id"][0]:
+            if current_video_name != batch["sub_video_id"][0] or self.data.get("fake_video", False):
                 save_fmaps = [None, None, None]
                 current_video_name = batch["sub_video_id"][0]
             # print(f"batch_videos: {len(batch_videos)}")
@@ -501,7 +501,7 @@ class DetectionValidator(BaseValidator):
                     from pycocotools.coco import COCO  # noqa
                     # from pycocotools.cocoeval import COCOeval  # noqa
                     # from ultralytics.data.cocoeval import COCOeval  # noqa
-                    from ultralytics.data.cocoeval_xs_vid import COCOeval
+                    from ultralytics.data.cocoeval import COCOeval  # noqa
 
                     anno = COCO(str(anno_json))  # init annotations api
                     pred = anno.loadRes(str(pred_json))  # init predictions api (must pass string, not Path)

@@ -201,6 +201,9 @@ class YOLODataset(BaseDataset):
         hyp.mosaic = 0.0  # set mosaic ratio=0.0
         hyp.copy_paste = 0.0  # keep the same behavior as previous v8 close-mosaic
         hyp.mixup = 0.0  # keep the same behavior as previous v8 close-mosaic
+        if hasattr(self, "video_transform"):
+            self.video_transform = True
+            LOGGER.info(f"Resetting video_transform to {self.video_transform}")
         self.transforms = self.build_transforms(hyp)
 
     def update_labels_info(self, label):
@@ -286,6 +289,7 @@ class YOLOStreamDataset(YOLODataset):
         super().__init__(*args,data=data, hyp=hyp, **kwargs) # 调用 YOLODataset 的初始化
 
         self.epoch = 0
+        self.video_transform = False #video seed
         # self.im_files 和 self.labels 已经由父类填充
         # self.ni 是总图像（帧）数
         
@@ -523,20 +527,21 @@ class YOLOStreamDataset(YOLODataset):
         """Returns transformed label information for given index."""
         im_info = self.im_files_info[index]
         # set same transform for each sub-videovideo_seed = index * (self.epoch + 1)
-        video_seed = im_info["sub_video_id"] * (self.epoch + 1)
-        random.seed(video_seed)
-        choice_sub_video_index =  [random.randint(0, len(self.sub_videos) - 1) for _ in range(self.moscia_n - 1)]
-        
+        if self.video_transform:
+            video_seed = im_info["sub_video_id"] * (self.epoch + 1)
+            random.seed(video_seed)
+            choice_sub_video_index =  [random.randint(0, len(self.sub_videos) - 1) for _ in range(self.moscia_n - 1)]
+            
         # 获取原始label
         orige_dict = self.get_image_and_label(index)
         
         # 设置video一致变换
-        if self.augment:
+        if self.augment and self.video_transform:
             self._set_samevideo_transform(video_seed)
             frame_id = im_info["sub_video_frame_id"]
             choice_frames_index = [self.sub_videos[v_i][frame_id]["original_idx"] for v_i in choice_sub_video_index]
             orige_dict["choice_frames_index"] = choice_frames_index
-        
+            
         # 应用数据增强
         label = self.transforms(orige_dict)
         
@@ -564,29 +569,29 @@ class YOLOVideoDataset(YOLOStreamDataset):
         """Returns transformed label information for given index."""
         video_list = self.sub_videos[index]
         video_trans_dict = []
-        video_seed = index * (self.epoch + 1)
         
-        random.seed(video_seed)
-        choice_sub_video_index =  [random.randint(0, len(self.sub_videos) - 1) for _ in range(self.moscia_n - 1)]
+        if self.video_transform:
+            video_seed = index * (self.epoch + 1)
+            random.seed(video_seed)
+            choice_sub_video_index =  [random.randint(0, len(self.sub_videos) - 1) for _ in range(self.moscia_n - 1)]
         
         for i, frame in enumerate(video_list):
             orige_dict = self.get_image_and_label(frame["original_idx"])
             
             # 获取moscia拼接的其他帧的index
-            self._set_samevideo_transform(video_seed)
-            frame_id = frame["sub_video_frame_id"]
-            choice_frames_index = [self.sub_videos[v_i][frame_id]["original_idx"] for v_i in choice_sub_video_index]
-            orige_dict["choice_frames_index"] = choice_frames_index
+            if self.augment and self.video_transform:
+                self._set_samevideo_transform(video_seed)
+                frame_id = frame["sub_video_frame_id"]
+                choice_frames_index = [self.sub_videos[v_i][frame_id]["original_idx"] for v_i in choice_sub_video_index]
+                orige_dict["choice_frames_index"] = choice_frames_index
         
             trans_dict = self.transforms(orige_dict.copy())
             trans_dict["sub_video_frame_id"] = frame["sub_video_frame_id"]
             trans_dict["sub_video_id"] = frame["sub_video_id"]
-            trans_dict["gt_mask"] = self.get_mask_labels(trans_dict["masks"], 
-                                                         prev_masks=video_trans_dict[-1]["masks"] if i > 0 else None,
-                                                         prev_value=1.0)
-            # trans_dict["gt_mask_bbox"] = self.get_mask_labels(trans_dict["bboxes"], 
-            #                                              prev_masks=video_trans_dict[-1]["bboxes"] if i > 0 else None,
-            #                                              prev_value=1.0)
+            if "masks" in trans_dict:
+                trans_dict["gt_mask"] = self.get_mask_labels(trans_dict["masks"], 
+                                                            prev_masks=video_trans_dict[-1]["masks"] if i > 0 else None,
+                                                            prev_value=0.5)
             
             video_trans_dict.append(trans_dict)
         return video_trans_dict  

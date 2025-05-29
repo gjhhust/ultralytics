@@ -6,7 +6,7 @@ import time
 from collections import defaultdict
 import copy
 from . import mask as maskUtils
-__author__ = 'guojiahaov2_0.75'
+__author__ = 'guojiahaov2_normal'
 
 ############################
 
@@ -471,12 +471,12 @@ class COCOeval:
             stats_print[0] = stats[0]
             stats_print[1] = stats[1]
             stats_print[2] = stats[2]
-            stats[3] = _summarize(1, iouThr=.75, areaRng='small', maxDets=self.params.maxDets[2])
-            stats[4] = _summarize(1, iouThr=.75, areaRng='medium', maxDets=self.params.maxDets[2])
-            stats[5] = _summarize(1, iouThr=.75, areaRng='large', maxDets=self.params.maxDets[2])
+            stats[3] = _summarize(1 , areaRng='small', maxDets=self.params.maxDets[2])
+            stats[4] = _summarize(1 , areaRng='medium', maxDets=self.params.maxDets[2])
+            stats[5] = _summarize(1 , areaRng='large', maxDets=self.params.maxDets[2])
             print("\n------------------------------------------")
             for i, areaRngLbl in enumerate(self.params.areaRngLbl[1:]):
-                stats_print[3+i] = _summarize(1, iouThr=.75, areaRng=areaRngLbl, maxDets=self.params.maxDets[2])
+                stats_print[3+i] = _summarize(1 , areaRng=areaRngLbl, maxDets=self.params.maxDets[2])
             print("\n------------------------------------------")
             stats[6] = _summarize(0, maxDets=self.params.maxDets[0])
             stats[7] = _summarize(0, maxDets=self.params.maxDets[1])
@@ -488,7 +488,7 @@ class COCOeval:
             # 所有
             # stats[0] = _summarize(1)
             # stats[1] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
-            # stats[2] = _summarize(1, iouThr=.75, maxDets=self.params.maxDets[2])
+            # stats[2] = _summarize(1 , maxDets=self.params.maxDets[2])
             # stats[3] = _summarize(0, maxDets=self.params.maxDets[0])
             # stats[4] = _summarize(0, maxDets=self.params.maxDets[1])
             # stats[5] = _summarize(0, maxDets=self.params.maxDets[2])
@@ -508,7 +508,7 @@ class COCOeval:
             #     print_j.append(j)
             #     print_name.append("AP-"+areaRngLbl)
             #     stats[j+1] = _summarize(1, iouThr=.5, areaRng=areaRngLbl, maxDets=self.params.maxDets[2])
-            #     stats[j+2] = _summarize(1, iouThr=.75, areaRng=areaRngLbl, maxDets=self.params.maxDets[2])
+            #     stats[j+2] = _summarize(1 , areaRng=areaRngLbl, maxDets=self.params.maxDets[2])
             #     stats[j+3] = _summarize(0, areaRng=areaRngLbl, maxDets=self.params.maxDets[0])
             #     stats[j+4] = _summarize(0, areaRng=areaRngLbl, maxDets=self.params.maxDets[1])
             #     stats[j+5] = _summarize(0, areaRng=areaRngLbl, maxDets=self.params.maxDets[2])
@@ -516,8 +516,14 @@ class COCOeval:
             def print_formatted_stats(stats):
                 # 数字乘以100后保留一位小数
                 formatted_stats = [f"{num * 100:.1f}" for num in stats]
-                # 使用空格连接数组中的元素并打印
-                print(" ".join(formatted_stats))
+                try:
+                    import logging
+                    logger = logging.getLogger("ultralytics")
+                    logger.info("\n********ALL, 0.75, 0.5, 0-12, 12-20, 20-32, small, medium, large*********************************")
+                    logger.info(" ".join(formatted_stats))
+                except:
+                    # 使用空格连接数组中的元素并打印
+                    print(" ".join(formatted_stats))
 
             print("\n********ALL, 0.75, 0.5, 0-12, 12-20, 20-32, small, medium, large*********************************")
             print_formatted_stats(stats_print)

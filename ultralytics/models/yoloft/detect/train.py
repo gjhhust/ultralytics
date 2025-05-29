@@ -172,7 +172,12 @@ class DetectionTrainer(BaseTrainer):
         if isinstance(self.args.train_slit, int):
             self.args.train_slit = [self.args.train_slit]
         
-        assert len(self.args.train_slit) == len(self.data["train_video_length"]), "must equter"
+        if "train_video_length" in self.data:
+            assert len(self.args.train_slit) == len(self.data["train_video_length"]), "must equter"
+        else:
+            # 如果没有设置数据集长度，则默认每个 epoch 子视频长度为1
+            self.data["train_video_length"] = [1]
+            self.args.train_slit = [0]
         
         while True:
             self.epoch = epoch

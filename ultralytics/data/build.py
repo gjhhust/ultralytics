@@ -25,7 +25,7 @@ from ultralytics.data.loaders import (
 from ultralytics.data.utils import IMG_FORMATS, PIN_MEMORY, VID_FORMATS
 from ultralytics.utils import RANK, colorstr
 from ultralytics.utils.checks import check_file
-
+from ultralytics.utils import LOGGER
 import torch
 import random
 from torch.utils.data import Sampler
