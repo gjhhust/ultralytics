@@ -387,7 +387,12 @@ class BaseMixTransform:
             return labels
 
         # Get index of one or three other images
-        indexes = self.get_indexes()
+        if "choice_frames_index" in labels:
+            assert len(labels["choice_frames_index"]) == self.n-1, "The number of choice_frames_index should be equal to n-1, if not please check ultralytics/data/dataset.py  paramter [moscia_n]"
+            indexes = labels["choice_frames_index"]
+        else:
+            indexes = self.get_indexes()
+            
         if isinstance(indexes, int):
             indexes = [indexes]
 

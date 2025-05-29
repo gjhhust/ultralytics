@@ -809,7 +809,7 @@ class v8DetectionLoss:
             
             if "gt_mask" in batch:
                 lpixl, larea, ldist = self.compute_loss_seg(pred_masks, batch["gt_mask"].to(self.device), target_bboxes, fg_mask)
-                loss[3] = lpixl + larea*5 + ldist*10
+                loss[3] = lpixl + larea + ldist*20
         # if hasattr(self, "bbox_feature_extractor"):
         #     loss_ = self.bbox_feature_extractor(batch, target_bboxes, gt_ids)
             
@@ -817,7 +817,7 @@ class v8DetectionLoss:
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
-        loss[3] *= 4.0  # box gain
+        loss[3] *= 1.0  # box gain
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
