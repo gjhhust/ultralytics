@@ -63,8 +63,8 @@ def train_model(model_config_dir, device, repeats, dataset_config_path, training
     #                               logging.StreamHandler(sys.__stdout__)]) # Also log to stdout
 
     # Redirect stdout and stderr to the logger
-    sys.stdout = StreamToLogger(logging.getLogger(), logging.DEBUG)
-    sys.stderr = StreamToLogger(logging.getLogger(), logging.ERROR)
+    # sys.stdout = StreamToLogger(logging.getLogger(), logging.DEBUG)
+    # sys.stderr = StreamToLogger(logging.getLogger(), logging.ERROR)
 
     batch_size = batch_size * len(device)
     # Initialize an empty DataFrame for storing all the experiment results
@@ -111,7 +111,7 @@ def train_model(model_config_dir, device, repeats, dataset_config_path, training
             for i in range(repeats):
                 logging.info(f"\nStarting training session {i+1}")
                 try:
-                    model = YOLO(model_config_path).load(pretrain_model)
+                    model = YOLOFT(model_config_path).load(pretrain_model)
                     results = model.train(data=dataset_config_path, cfg=training_config_path, batch=batch_size, epochs=epochs, imgsz=img_size, device=device, workers=workers)
                     logging.info(f"Training session {i+1} completed.")
                 except Exception as e:
@@ -129,15 +129,15 @@ def train_model(model_config_dir, device, repeats, dataset_config_path, training
     # logging.info(f"All experiment results saved to {final_results_file}")
 
 if __name__ == "__main__":
-    model_config_dir = "/data/jiahaoguo/ultralytics_yoloft/ultralytics/config/yolo_upsample"  # Replace it with model configuration directory
+    model_config_dir = "config/yolo_time"  # Replace it with model configuration directory
 
     repeats = 2
-    dataset_config_path = "config/dataset/Train_6_Test_14569_single.yaml"
-    training_config_path = "config/train/gaode_train_single.yaml"
+    dataset_config_path = "config/dataset/XS-VIDv2.yaml"
+    training_config_path = "config/train/default_XS-VID.yaml"
     epochs = 9
-    img_size = 896
+    img_size = 1024
     workers = 4
-    pretrain_model="yolov8s.pt"
-    batch_size = 36
+    pretrain_model="pretrain/yolov8_S1_DCN_dy/best.pt"
+    batch_size = 28
 
-    train_model(model_config_dir, [2,3], repeats, dataset_config_path, training_config_path, batch_size, epochs, img_size, workers, pretrain_model)
+    train_model(model_config_dir, [0,1], repeats, dataset_config_path, training_config_path, batch_size, epochs, img_size, workers, pretrain_model)

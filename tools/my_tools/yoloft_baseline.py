@@ -14,28 +14,28 @@ def read_yaml(path):
 def get_file_name(path):
     return os.path.basename(path).split(".")[0]
 
-def train_model(repeats, model_config_path, pretrain_model, dataset_config_path, training_config_path, batch_size, epochs, img_size, workers, log_dir='./yoloft/logs'):
+def train_model(repeats, device, model_config_path, pretrain_model, dataset_config_path, training_config_path, batch_size, epochs, img_size, workers, log_dir='./yoloft/logs'):
     # Ensure that the log directory exists
     os.makedirs(log_dir, exist_ok=True)
 
     # Get the value of CUDA_VISIBLE_DEVICES in the environment variable
-    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    # cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
 
-    if cuda_visible_devices is not None:
-        cuda_devices = cuda_visible_devices.split(',')
-        device = [int(id) for id in cuda_devices]
-        print(f"CUDA_VISIBLE_DEVICES: {device}")
-    else:
-        print("No CUDA_VISIBLE_DEVICES set")
+    # if cuda_visible_devices is not None:
+    #     cuda_devices = cuda_visible_devices.split(',')
+    #     device = [int(id) for id in cuda_devices]
+    #     print(f"CUDA_VISIBLE_DEVICES: {device}")
+    # else:
+    #     print("No CUDA_VISIBLE_DEVICES set")
 
-    # Creating log file names
-    start_time = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    log_filename = f"{get_file_name(model_config_path)}_{get_file_name(dataset_config_path)}_{get_file_name(training_config_path)}_batch{batch_size}_epochs{epochs}_img_size{img_size}_{start_time}.log"
-    log_path = os.path.join(log_dir, log_filename)
+    # # Creating log file names
+    # start_time = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    # log_filename = f"{get_file_name(model_config_path)}_{get_file_name(dataset_config_path)}_{get_file_name(training_config_path)}_batch{batch_size}_epochs{epochs}_img_size{img_size}_{start_time}.log"
+    # log_path = os.path.join(log_dir, log_filename)
 
-    # Open log file
-    sys.stdout = open(log_path, 'w')
-    sys.stderr = sys.stdout
+    # # Open log file
+    # sys.stdout = open(log_path, 'w')
+    # sys.stderr = sys.stdout
 
     print("model_config_path=", model_config_path)
     print("pretrain_model=", pretrain_model)
@@ -47,7 +47,7 @@ def train_model(repeats, model_config_path, pretrain_model, dataset_config_path,
     print("device=", device)
     print("workers=", workers)
 
-    print(f"CUDA_VISIBLE_DEVICES set to {cuda_devices}")
+    # print(f"CUDA_VISIBLE_DEVICES set to {cuda_devices}")
     print(f"Starting experiments with the following parameters:")
     print(f"Model Config Path: {model_config_path}")
     print(f"Dataset Config Path: {dataset_config_path}")
@@ -74,31 +74,32 @@ def train_model(repeats, model_config_path, pretrain_model, dataset_config_path,
         print(f"\nStarting training session {i+1}")
         try:
             model = YOLOFT(model_config_path).load(pretrain_model)
-            results = model.train(data=dataset_config_path, cfg=training_config_path, batch=batch_size, epochs=epochs, imgsz=img_size, device=device, workers=workers)
+            results = model.train(data=dataset_config_path, cfg=training_config_path, batch=batch_size*len(device), epochs=epochs, imgsz=img_size, device=device, workers=workers)
             print(f"Training session {i+1} completed.")
         except Exception as e:
             print(f"An error occurred during training session {i+1}: {e}")
 
-    # Close log file
-    sys.stdout.close()
-    sys.stdout = sys.__stdout__
-    sys.stderr = sys.__stderr__
-    print(f"All experiments completed. Logs saved to {log_path}")
-    extract_best_results(log_path)
+    # # Close log file
+    # sys.stdout.close()
+    # sys.stdout = sys.__stdout__
+    # sys.stderr = sys.__stderr__
+    # print(f"All experiments completed. Logs saved to {log_path}")
+    # extract_best_results(log_path)
 
 
 
 
 if __name__ == "__main__":
     # use export CUDA_VISIBLE_DEVICES=0,1,2,3
-    repeats = 3
-    model_config_path = "config/yoloft_onxx/yoloftM_dy.yaml"
-    pretrain_model = "pretrain/yolosft_dcns1_dy/best.pt"
-    dataset_config_path = "config/dataset/Train_6_Test_14569_single.yaml"
-    training_config_path = "config/train/gaode_train_single.yaml"
-    batch_size = 10
-    epochs = 25
-    img_size = 896
+    repeats = 2
+    model_config_path = "pretrain/yolov8s_ftv1_dim384_dcn_dy_videotrain/yolov8s_ftv1_dim384_dcn_dy_3D.yaml"
+    pretrain_model = "pretrain/yolov8s_ftv1_dim384_dcn_dy_videotrain/best.pt"
+    dataset_config_path = "config/dataset/XS-VIDv2.yaml"
+    training_config_path = "config/train/default_XS-VID.yaml"
+    batch_size = 12*2
+    epochs =25
+    img_size = 1024
     workers = 4
+    device = [0,1]
 
-    train_model(repeats, model_config_path, pretrain_model, dataset_config_path, training_config_path, batch_size, epochs, img_size, workers)
+    train_model(repeats, device, model_config_path, pretrain_model, dataset_config_path, training_config_path, batch_size, epochs, img_size, workers)

@@ -501,7 +501,7 @@ class DetectionValidator(BaseValidator):
                     from pycocotools.coco import COCO  # noqa
                     # from pycocotools.cocoeval import COCOeval  # noqa
                     # from ultralytics.data.cocoeval import COCOeval  # noqa
-                    from ultralytics.data.cocoeval_xs_vid import COCOeval
+                    from ultralytics.data.cocoeval import COCOeval  # noqa
 
                     anno = COCO(str(anno_json))  # init annotations api
                     pred = anno.loadRes(str(pred_json))  # init predictions api (must pass string, not Path)
