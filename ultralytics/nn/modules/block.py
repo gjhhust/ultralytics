@@ -2003,6 +2003,9 @@ class MSTFv1(nn.Module):
                                         kernel_size = 3)
             self.forward = self.forward_mstf
         elif mode == "conv3d":
+            # print(self.net_dim)
+            in_channels.append(self.net_dim)
+            print(in_channels)
             assert self.net_dim == in_channels[-1], f"input last feature dims must equal to now feature dims, plase set InputData:[{in_channels[-1]}]->[{self.net_dim}]"
             self.block = FDCN(DepthSeparableConv3D(in_channels=self.net_dim, out_channels=self.net_dim), 
                                         in_channel, 
@@ -2014,6 +2017,7 @@ class MSTFv1(nn.Module):
             raise ValueError("MSTFv1 paramter [mode] must be in [concat, net, conv3d]")
 
         self.mask_aux_net = nn.Conv2d(self.net_dim, 1, 1) #only training mask aux net
+        self.net = None
 
     def forward_concat(self, x):
         """Forward pass for the YOLOv8 mask Proto module."""
@@ -2021,21 +2025,37 @@ class MSTFv1(nn.Module):
         return torch.cat([x1,x2], self.d), net_x
 
     def forward_mstf(self, x):
-        x1, x2, net_x = x
+        x1, x2  = x
+        net_x = self.net
         input_x = torch.cat([x1,x2], self.d)
         b, c, h, w = input_x.shape
         if net_x is None:
             net_x = torch.zeros([b, self.net_dim, h, w], device=input_x.device, dtype=input_x.dtype)
+        elif net_x.shape!= (b, self.net_dim, h, w):
+            net_x = torch.zeros([b, self.net_dim, h, w], device=input_x.device, dtype=input_x.dtype)
 
         x, net = self.block(input_x, net_x)
         x = x + input_x
+        self.net = net.detach()
         
-        if self.training:
-            mask_aux = self.mask_aux_net(net)
-            # mask_aux = torch.ones_like(net)
-            return x, net, mask_aux
-        else:
-            return x, net
+        return x
+        
+    # def forward_mstf(self, x):
+    #     x1, x2, net_x = x
+    #     input_x = torch.cat([x1,x2], self.d)
+    #     b, c, h, w = input_x.shape
+    #     if net_x is None:
+    #         net_x = torch.zeros([b, self.net_dim, h, w], device=input_x.device, dtype=input_x.dtype)
+
+    #     x, net = self.block(input_x, net_x)
+    #     x = x + input_x
+        
+    #     if self.training:
+    #         mask_aux = self.mask_aux_net(net)
+    #         # mask_aux = torch.ones_like(net)
+    #         return x, net, mask_aux
+    #     else:
+    #         return x, net
     
 import torch
 import torch.nn as nn

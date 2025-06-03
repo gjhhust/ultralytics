@@ -2,7 +2,7 @@ import os
 import sys
 import datetime
 import yaml
-from ultralytics.models import YOLOFT
+from ultralytics.models import YOLO
 import os
 from analy_log import extract_best_results
 
@@ -73,7 +73,7 @@ def train_model(repeats, device, model_config_path, pretrain_model, dataset_conf
     for i in range(repeats):
         print(f"\nStarting training session {i+1}")
         try:
-            model = YOLOFT(model_config_path).load(pretrain_model)
+            model = YOLO(model_config_path).load(pretrain_model)
             results = model.train(data=dataset_config_path, cfg=training_config_path, batch=batch_size*len(device), epochs=epochs, imgsz=img_size, device=device, workers=workers)
             print(f"Training session {i+1} completed.")
         except Exception as e:
@@ -91,15 +91,15 @@ def train_model(repeats, device, model_config_path, pretrain_model, dataset_conf
 
 if __name__ == "__main__":
     # use export CUDA_VISIBLE_DEVICES=0,1,2,3
-    repeats = 2
-    model_config_path = "pretrain/yolov8s_ftv1_dim384_dcn_dy_videotrain/yolov8s_ftv1_dim384_dcn_dy_3D.yaml"
-    pretrain_model = "pretrain/yolov8s_ftv1_dim384_dcn_dy_videotrain/best.pt"
+    repeats = 4
+    model_config_path = "config/yolo/yolov8_S1_DCN_dy_3d.yaml"
+    pretrain_model = "runs/XS-VID/train74_yolov8+tinyloss_dcn_dy26.2/weights/best.pt"
     dataset_config_path = "config/dataset/XS-VIDv2.yaml"
     training_config_path = "config/train/default_XS-VID.yaml"
-    batch_size = 12*2
-    epochs =25
+    batch_size = 24
+    epochs = 25
     img_size = 1024
     workers = 4
-    device = [0,1]
+    device = [2,3]
 
     train_model(repeats, device, model_config_path, pretrain_model, dataset_config_path, training_config_path, batch_size, epochs, img_size, workers)

@@ -711,7 +711,7 @@ class v8DetectionLoss:
         self.use_dfl = m.reg_max > 1
 
         self.assigner = TaskAlignedAssigner(topk=tal_topk, num_classes=self.nc, alpha=0.5, beta=6.0)
-        self.bbox_loss = BboxLoss_trend(m.reg_max).to(device)
+        self.bbox_loss = BboxLoss(m.reg_max).to(device)
         print(f"Using SAFitLoss for bbox loss")
         self.tiny_loss = SAFitLoss(loss_weight=1.0).to(device)
         self.nwd_loss = NWDLoss(loss_weight=1.0).to(device)
@@ -805,7 +805,7 @@ class v8DetectionLoss:
         if fg_mask.sum():
             target_bboxes /= stride_tensor
             loss[0], loss[2] = self.bbox_loss(
-                pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask, support_bboxes
+                pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask
             )
             tiny_l = self.tiny_loss(pred_bboxes, target_bboxes)
             loss[0] = tiny_l * 0.4 + loss[0] * 0.6
@@ -817,7 +817,7 @@ class v8DetectionLoss:
         #     loss_ = self.bbox_feature_extractor(batch, target_bboxes, gt_ids)
             
 
-        loss[0] *= self.hyp.box  # box gain
+        loss[0] *= 6.5  # box gain
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
         loss[3] *= 7.5  # box gain

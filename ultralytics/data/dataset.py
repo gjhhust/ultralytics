@@ -201,9 +201,9 @@ class YOLODataset(BaseDataset):
         hyp.mosaic = 0.0  # set mosaic ratio=0.0
         hyp.copy_paste = 0.0  # keep the same behavior as previous v8 close-mosaic
         hyp.mixup = 0.0  # keep the same behavior as previous v8 close-mosaic
-        if hasattr(self, "video_transform"):
-            self.video_transform = True
-            LOGGER.info(f"Resetting video_transform to {self.video_transform}")
+        # if hasattr(self, "video_transform"):
+        #     self.video_transform = True
+        #     LOGGER.info(f"Resetting video_transform to {self.video_transform}")
         self.transforms = self.build_transforms(hyp)
 
     def update_labels_info(self, label):
