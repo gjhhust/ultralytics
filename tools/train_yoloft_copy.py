@@ -15,5 +15,5 @@ results = model.train(data="config/dataset/XS-VIDv2.yaml",
 # results = model.train(data="config/dataset/Train_5&6_Test_14569_single.yaml",
 #                       cfg="config/train/gaode_train_single.yaml",
 #                       batch=34*2, epochs=28, imgsz=896, device=[0,1],workers = 6)
-print("yolov8s_ftv1_dcn_dy  video transform")
+print("yolov8s_ftv1_dcn_dy  maskloss 1.0(lpixl + larea + 20*ldist)  nc=1  prev_value=1.0(Y), crop")
   

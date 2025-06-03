@@ -438,6 +438,27 @@ class YOLOStreamDataset(YOLODataset):
 
         return combined_mask
     
+    # def get_bboxes_labels(self, cur_bboxes, prev_bboxes=None):
+    #     '''
+    #     作用: 获取当前帧和前一帧的bboxes并集 (快速方法)。
+    #     Args:
+    #         cur_bboxes (torch.Tensor): 当前帧的bboxes，形状为 [N, 4]
+    #         prev_bboxes (torch.Tensor, optional): 前一帧的帧的bboxes，形状为 [N, 4]。默认为 None。
+    #     Returns:
+    #         torch.Tensor: 合并后的bboxes，形状为 [N, 4]
+    #     '''
+    #     cur_masks[cur_masks != 0] = 1.0
+    #     combined_mask = cur_masks.float()
+
+    #     if prev_masks is not None:
+    #         prev_masks[prev_masks != 0] = prev_value
+    #         combined_mask += prev_masks.float()
+
+    #     # 将所有大于 0 的值都视为 1 (前景)，0 值保持 0 (背景)
+    #     combined_mask = torch.clamp(combined_mask, min=0, max=1)
+
+    #     return combined_mask
+    
     def _organize_videos_and_subsample(self, video_length):
         """
         识别原始视频，并根据 video_length 和 video_interval 将它们划分为子视频。
