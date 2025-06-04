@@ -129,15 +129,15 @@ def train_model(model_config_dir, device, repeats, dataset_config_path, training
     # logging.info(f"All experiment results saved to {final_results_file}")
 
 if __name__ == "__main__":
-    model_config_dir = "config/yolo_time"  # Replace it with model configuration directory
+    model_config_dir = "config/yolo_conv"  # Replace it with model configuration directory
 
     repeats = 2
     dataset_config_path = "config/dataset/XS-VIDv2.yaml"
-    training_config_path = "config/train/default_XS-VID.yaml"
+    training_config_path = "config/train/default.yaml"
     epochs = 9
     img_size = 1024
-    workers = 4
-    pretrain_model="pretrain/yolov8_S1_DCN_dy/best.pt"
-    batch_size = 28
+    workers = 8
+    pretrain_model="yolov8s.pt"
+    batch_size = 36
 
-    train_model(model_config_dir, [0,1], repeats, dataset_config_path, training_config_path, batch_size, epochs, img_size, workers, pretrain_model)
+    train_model(model_config_dir, [0], repeats, dataset_config_path, training_config_path, batch_size, epochs, img_size, workers, pretrain_model)

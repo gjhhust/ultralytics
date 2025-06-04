@@ -9,12 +9,12 @@
 #     └── VisDrone  ← downloads here (2.3 GB)
 
 # Train/val/test sets as 1) dir: path/to/imgs, 2) file: path/to/imgs.txt, or 3) list: [path/to/imgs1, path/to/imgs2, ..]
-path: /data/jiahaoguo/datasets/XS-VID # dataset root dir
-train: ./annotations/merge_V2V1/yolo/train.txt
-val: ./annotations/merge_V2V1/yolo/test.txt # val images (relative to 'path')  548 images
-test: ./annotations/merge_V2V1/yolo/test.txt # test images (optional)  1610 images
+path: /workspace/datasets/XS-VID # dataset root dir
+train: ./annotations/yolo/train.txt
+val: ./annotations/yolo/test.txt # val images (relative to 'path')  548 images
+test: ./annotations/yolo/test.txt # test images (optional)  1610 images
 
-labels_dir: ./annotations/merge_V2V1/yolo
+labels_dir: ./annotations/yolo
 images_dir: ./images
 # segment_labels_dir: ./annotations/segment_yolox
 
@@ -23,7 +23,7 @@ train_video_length: [1]
 train_video_interval: 2
 
 #coco eval
-eval_ann_json: ./annotations/jsonv2/test_segment.json
+eval_ann_json: ./test_segment.json
 classes_map: [0,1,2,3,4,5,6]
 # Classes
 names:

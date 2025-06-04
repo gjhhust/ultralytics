@@ -7,11 +7,11 @@ from ultralytics import YOLOFT, YOLO
 # model = YOLO("config/yoloft/yoloftsv2-C-384.yaml").load("./yoloft-C-384_obj365_e7.pt")
 # model = YOLOFT("/data/shuzhengwang/project/ultralytics/runs/detect/train201/weights/last.pt")
 # model = YOLO("config/yoloft/yoloftsv2-C-384.yaml").load("./yoloft-C-384_obj365_e7.pt")
-model = YOLO("config/yolo/yolov8_S1_DCN_dy_3d.yaml").load("runs/XS-VID/train74_yolov8+tinyloss_dcn_dy26.2/weights/best.pt")
+model = YOLO("config/yolo_conv/yolov8S_test.yaml")
 
 results = model.train(data="config/dataset/XS-VIDv2.yaml",
                       cfg="config/train/default.yaml",
                       # constrained = True,
-                      batch=24, epochs=25, imgsz=1024, device=[0],workers = 4)
+                      batch=2, epochs=25, imgsz=1024, device=[0],workers = 4)
                     # batch=6, epochs=25, imgsz=896, device=[2],workers = 6)
 # print("yoloftsv2-C-384_cbam_Focus \nload(./yolov8s.pt)  \nTrain_6_Test_gaode6")

@@ -92,14 +92,14 @@ def train_model(repeats, device, model_config_path, pretrain_model, dataset_conf
 if __name__ == "__main__":
     # use export CUDA_VISIBLE_DEVICES=0,1,2,3
     repeats = 4
-    model_config_path = "config/yolo/yolov8_S1_DCN_dy_3d.yaml"
-    pretrain_model = "runs/XS-VID/train74_yolov8+tinyloss_dcn_dy26.2/weights/best.pt"
+    model_config_path = "config/yolo/yolov8_L1_DCN_dy_3d.yaml"
+    pretrain_model = "pretrain/yolov8L_dcndys1/yolov8L_dcndys1_200e_best.pt"
     dataset_config_path = "config/dataset/XS-VIDv2.yaml"
-    training_config_path = "config/train/default_XS-VID.yaml"
-    batch_size = 24
+    training_config_path = "config/train/default.yaml"
+    batch_size = 20
     epochs = 25
     img_size = 1024
-    workers = 4
-    device = [2,3]
+    workers = 16
+    device = [0]
 
     train_model(repeats, device, model_config_path, pretrain_model, dataset_config_path, training_config_path, batch_size, epochs, img_size, workers)
