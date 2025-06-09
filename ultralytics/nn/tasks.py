@@ -17,7 +17,6 @@ from ultralytics.nn.modules import (
     C2PSA,
     C3,
     C2f_DCNV3,
-    C2f_TEST,
     C2f_MDC,
     C2f_DC,
     C2f_light,
@@ -80,6 +79,7 @@ from ultralytics.nn.modules import (
     MANet,
     MANetDCN,
     MSTFv1,
+    MSTFv1_yolo,
     DyDetect,
     Segmenter
 )
@@ -582,7 +582,7 @@ class VideoDetectionModel(BaseModel):
             if profile:
                 self._profile_one_layer(m, x, dt)
             x = m(x)  # run
-            if isinstance(m, MSTFv1):
+            if isinstance(m, (MSTFv1,MSTFv1_yolo)):
                 if len(x) == 3: # mask pred loss
                     pred_masks.append(x[2])
                     x = x[:2]
@@ -1218,6 +1218,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             LOGGER.warning(f"WARNING ⚠️ no model scale passed. Assuming scale='{scale}'.")
         if len(scales[scale]) == 4:
             depth, width, max_channels, threshold = scales[scale]
+        elif len(scales[scale]) == 6:
+            depth, width, max_channels, history_dim1, history_dim2, history_dim3 = scales[scale] 
         else:
             depth, width, max_channels = scales[scale]
 
@@ -1257,7 +1259,6 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             MANet,
             MANetDCN,
             C2f_DCNV3,
-            C2f_TEST,
             C2f_light,
             C2f_MDC,
             C2f_DC,
@@ -1298,7 +1299,6 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 MANet,
                 MANetDCN,
                 C2f_DCNV3,
-                C2f_TEST,
                 C2f_light,
                 C2f_MDC,
                 C2f_DC,
@@ -1337,7 +1337,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         elif m is List_Split:
             c2 = ch[f][args[0]]
         elif m is InputData:
-            c2 = args
+            c2 = [3, history_dim1, history_dim2, history_dim3] #用于后续模块读取输入shape
             args = []
         elif m in {Detect, WorldDetect, Segment, Pose, OBB, ImagePoolingAttn, v10Detect, DyDetect, Segmenter}:
             args.append([ch[x] for x in f])
@@ -1361,7 +1361,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c1 = [ch[f_] for f_ in f]
             c2 = c1[1:]
             args.insert(0, c1)
-        elif m in (MSTFv1, ):
+        elif m in (MSTFv1, MSTFv1_yolo):
             c1 = [ch[f_] for f_ in f]
             c2 = sum(ch[x] for x in f[:2])
             args.insert(0, c1)
@@ -1399,7 +1399,8 @@ def yaml_model_load(path):
         LOGGER.warning(f"WARNING ⚠️ Ultralytics YOLO P6 models now use -p6 suffix. Renaming {path.stem} to {new_stem}.")
         path = path.with_name(new_stem + path.suffix)
 
-    unified_path = re.sub(r"(\d+)([nslmx])(.+)?$", r"\1\3", str(path))  # i.e. yolov8x.yaml -> yolov8.yaml
+    # unified_path = re.sub(r"(\d+)([nslmx])(.+)?$", r"\1\3", str(path))  # i.e. yolov8x.yaml -> yolov8.yaml
+    unified_path = re.sub(r"([a-zA-Z0-9]+)([nslmx])(.+)?$", r"\1\3", str(path))
     yaml_file = check_yaml(unified_path, hard=False) or check_yaml(path)
     d = yaml_load(yaml_file)  # model dict
     d["scale"] = guess_model_scale(path)
@@ -1420,7 +1421,8 @@ def guess_model_scale(model_path):
         (str): The size character of the model's scale, which can be n, s, m, l, or x.
     """
     try:
-        return re.search(r"yolo[v]?\d+([nslmx])", Path(model_path).stem).group(1)  # noqa, returns n, s, m, l, or x
+        # 修改后的正则表达式，使用 [a-zA-Z0-9]+ 匹配模型名称部分
+        return re.search(r"yolo[v]?[a-zA-Z0-9]*([nslmx])", Path(model_path).stem).group(1)
     except AttributeError:
         return ""
 

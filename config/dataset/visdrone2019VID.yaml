@@ -1,0 +1,41 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
+# VisDrone2019-DET dataset https://github.com/VisDrone/VisDrone-Dataset by Tianjin University
+# Documentation: https://docs.ultralytics.com/datasets/detect/visdrone/
+# Example usage: yolo train data=VisDrone.yaml
+# parent
+# ├── ultralytics
+# └── datasets
+#     └── VisDrone  ← downloads here (2.3 GB)
+
+# Train/val/test sets as 1) dir: path/to/imgs, 2) file: path/to/imgs.txt, or 3) list: [path/to/imgs1, path/to/imgs2, ..]
+path: /workspace/datasets/VisDrone2019-VID # dataset root dir
+train: ./annotations/yolo_labels/train.txt
+val: ./annotations/yolo_labels/test.txt # val images (relative to 'path')  548 images
+test: ./annotations/yolo_labels/test.txt # test images (optional)  1610 images
+
+labels_dir: ./annotations/yolo_labels
+images_dir: ./images
+# segment_labels_dir: ./annotations/segment_yolox
+
+StreamVideoSampler: True
+train_video_length: [1]
+train_video_interval: 3
+
+#coco eval
+eval_ann_json: ./annotations/test.json
+classes_map: [1,2,3,4,5,6,7,8,9,10,11,12] #将网络输出映射成coco的分类
+# Classes
+names:
+  0: ignored regions
+  1: pedestrian
+  2: people
+  3: bicycle
+  4: car
+  5: van
+  6: truck
+  7: tricycle
+  8: awning-tricycle
+  9: bus
+  10: motor
+  11: other

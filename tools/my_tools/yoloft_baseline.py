@@ -55,12 +55,12 @@ def train_model(repeats, device, model_config_path, pretrain_model, dataset_conf
     print(f"Batch Size: {batch_size}, Epochs: {epochs}, Image Size: {img_size}, Devices: {device}, Workers: {workers}")
 
     # Read and print the contents of the configuration file
-    model_config = read_yaml(model_config_path)
+    # model_config = read_yaml(model_config_path)
     dataset_config = read_yaml(dataset_config_path)
     training_config = read_yaml(training_config_path)
-    print("Model Config:")
-    for key, value in model_config.items():
-        print(f"{key}: {value}")
+    # print("Model Config:")
+    # for key, value in model_config.items():
+    #     print(f"{key}: {value}")
 
     print("\nDataset Config:")
     for key, value in dataset_config.items():
@@ -92,14 +92,14 @@ def train_model(repeats, device, model_config_path, pretrain_model, dataset_conf
 if __name__ == "__main__":
     # use export CUDA_VISIBLE_DEVICES=0,1,2,3
     repeats = 4
-    model_config_path = "config/yolo/yolov8_L1_DCN_dy_3d.yaml"
-    pretrain_model = "pretrain/yolov8L_dcndys1/yolov8L_dcndys1_200e_best.pt"
-    dataset_config_path = "config/dataset/XS-VIDv2.yaml"
+    model_config_path = "yoloftyolos.yaml"
+    pretrain_model = "pretrain/yoloft_coco200e/yolofts.pt"
+    dataset_config_path = "config/dataset/visdrone2019VID.yaml"
     training_config_path = "config/train/default.yaml"
-    batch_size = 20
-    epochs = 25
+    batch_size = 34 #20
+    epochs = 14
     img_size = 1024
-    workers = 16
+    workers = 8
     device = [0]
 
     train_model(repeats, device, model_config_path, pretrain_model, dataset_config_path, training_config_path, batch_size, epochs, img_size, workers)

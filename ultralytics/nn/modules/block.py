@@ -8,7 +8,6 @@ import torch.nn.functional as F
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
 from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad, DCNV3_conv,ModulatedDeformConv,DeformConv, GroupConv
-from .conv import PartialConv, LightConv
 from .transformer import TransformerBlock
 from .flow import SepConvGRU, ConvGRU
 
@@ -270,64 +269,6 @@ class C2f_ODConv(nn.Module):
         self.cv1 = Conv(c1, 2 * self.c, 1, 1)
         self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
         self.m = nn.ModuleList(Bottleneck_ODConv(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
-
-    def forward(self, x):
-        """Forward pass through C2f layer."""
-        y = list(self.cv1(x).chunk(2, 1))
-        y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
-
-    def forward_split(self, x):
-        """Forward pass using split() instead of chunk()."""
-        y = self.cv1(x).split((self.c, self.c), 1)
-        y = [y[0], y[1]]
-        y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
-
-from .dyconv import Dynamic_conv2d
-from .fdconv import FDConv
-class Bottleneck_TEST(nn.Module):
-    # Standard bottleneck
-    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5, name="conv"):  # ch_in, ch_out, shortcut, groups, kernels, expand
-        super().__init__()
-        c_ = int(c2 * e)  # hidden channels
-        self.cv1 = Conv(c1, c_, k[0], 1)
-        assert k[1][0] == k[1][1]
-        if name == "conv":
-            self.cv2 = Conv(c_, c2, k[1], 1, g=g)
-        elif name =="DCNv3":
-            assert k[1][0] == k[1][1]
-            self.cv2 = DCNV3_conv(c_, c2, k[1][0], 1, g=g)
-        elif name == "DYconv":
-            self.cv2 = Dynamic_conv2d(c_, c2, k[1][0], stride=1, groups=g, padding=autopad(k[1][0], None, 1))
-        elif name == "ODconv":
-            self.cv2 = ODConv2d(c_, c2, k[1][0], s=1, g=g)
-        elif name == "FDConv":
-            self.cv2 = FDConv(c_, c2, k[1][0], stride=1, groups=g, padding=autopad(k[1][0], None, 1))
-        elif name =="DWConv":
-            self.cv2 = DWConv(c_, c2, k[1][0], s=1)
-        elif name == "PConv":
-            self.cv2 = nn.Sequential(
-                    PartialConv(c_),
-                    Conv(c_, c2, k[1], 1, g=g)
-                )
-
-            
-        self.add = shortcut and c1 == c2
- 
-    def forward(self, x):
-        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
-
-class C2f_TEST(nn.Module):
-    """Faster Implementation of CSP Bottleneck with 2 convolutions."""
-
-    def __init__(self, c1, c2, n=1, shortcut=False, name="conv", g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super().__init__()
-        print(name)
-        self.c = int(c2 * e)  # hidden channels
-        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
-        self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
-        self.m = nn.ModuleList(Bottleneck_TEST(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0, name=name) for _ in range(n))
 
     def forward(self, x):
         """Forward pass through C2f layer."""
@@ -1282,7 +1223,7 @@ class C2f_DCNV3(nn.Module):
         y.extend(m(y[-1]) for m in self.m)
         return self.cv2(torch.cat(y, 1))
 
-
+from .conv import PartialConv, LightConv
 class Bottleneck_light(nn.Module):
     def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):  # ch_in, ch_out, shortcut, groups, kernels, expand
         super().__init__()
@@ -2045,7 +1986,8 @@ class MSTF_BLOCK(nn.Module):
     
         return fmaps_new+fmaps_old
 
-class MSTFv1(nn.Module):
+# yolov8训练框架yoloft
+class MSTFv1_yolo(nn.Module):
     def __init__(self, in_channels, dimension=1, mode="concat", width=0.25, nc=7):
         """Concatenates a list of tensors along a specified dimension."""
         super().__init__()
@@ -2098,23 +2040,59 @@ class MSTFv1(nn.Module):
         self.net = net.detach()
         
         return x
-        
-    # def forward_mstf(self, x):
-    #     x1, x2, net_x = x
-    #     input_x = torch.cat([x1,x2], self.d)
-    #     b, c, h, w = input_x.shape
-    #     if net_x is None:
-    #         net_x = torch.zeros([b, self.net_dim, h, w], device=input_x.device, dtype=input_x.dtype)
 
-    #     x, net = self.block(input_x, net_x)
-    #     x = x + input_x
+# yoloft 正式版本
+class MSTFv1(nn.Module):
+    def __init__(self, in_channels, dimension=1, mode="concat", width=0.25, nc=7):
+        """Concatenates a list of tensors along a specified dimension."""
+        super().__init__()
+        self.d = dimension
+        in_channel = in_channels[0] + in_channels[1]
+        self.net_dim = int(in_channel*width)
+        if mode == "concat":
+            self.forward = self.forward_concat
+        elif mode == "net":
+            assert self.net_dim == in_channels[-1], f"input last feature dims must equal to now feature dims, plase set InputData:[{in_channels[-1]}]->[{self.net_dim}]"
+            self.block = FDCN(ConvGRU(hidden_dim=self.net_dim, input_dim=self.net_dim), 
+                                        in_channel, 
+                                        self.net_dim, 
+                                        kernel_size = 3)
+            self.forward = self.forward_mstf
+        elif mode == "conv3d":
+            assert self.net_dim == in_channels[-1], f"input last feature dims must equal to now feature dims, plase set InputData:[{in_channels[-1]}]->[{self.net_dim}]"
+            self.block = FDCN(DepthSeparableConv3D(in_channels=self.net_dim, out_channels=self.net_dim), 
+                                        in_channel, 
+                                        self.net_dim, 
+                                        kernel_size = 3,
+                                        is_encoder=True)
+            self.forward = self.forward_mstf
+        else:
+            raise ValueError("MSTFv1 paramter [mode] must be in [concat, net, conv3d]")
+
+        self.mask_aux_net = nn.Conv2d(self.net_dim, 1, 1) #only training mask aux net
+        self.net = None
+
+    def forward_concat(self, x):
+        """Forward pass for the YOLOv8 mask Proto module."""
+        x1, x2, net_x = x
+        return torch.cat([x1,x2], self.d), net_x
+
+    def forward_mstf(self, x):
+        x1, x2, net_x = x
+        input_x = torch.cat([x1,x2], self.d)
+        b, c, h, w = input_x.shape
+        if net_x is None:
+            net_x = torch.zeros([b, self.net_dim, h, w], device=input_x.device, dtype=input_x.dtype)
+
+        x, net = self.block(input_x, net_x)
+        x = x + input_x
         
-    #     if self.training:
-    #         mask_aux = self.mask_aux_net(net)
-    #         # mask_aux = torch.ones_like(net)
-    #         return x, net, mask_aux
-    #     else:
-    #         return x, net
+        if self.training:
+            mask_aux = self.mask_aux_net(net)
+            # mask_aux = torch.ones_like(net)
+            return x, net, mask_aux
+        else:
+            return x, net
     
 import torch
 import torch.nn as nn
