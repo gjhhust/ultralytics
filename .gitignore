@@ -175,6 +175,8 @@ calibration_*.npy
 ./run/*
 ultralytics/data/datasets
 *.zip
-!pretrain/*/*.pt
+/pretrain/
+/results.json
+/*.npz
 test.jpg
 results/

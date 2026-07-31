@@ -1,120 +1,206 @@
-# YOLOFT: [An Extremely Small Video Object Detection Benchmark](https://gjhhust.github.io/XS-VID/) Baseline
+# YOLOFT for XS-VID v2
 
-## :loudspeaker: Introduction
-This is the official implementation of the baseline model for [XS-VID](https://gjhhust.github.io/XS-VID/) benchmark.
+This repository contains the legacy YOLOFT runtime used for the XS-VID v2
+benchmark release. It supports the Detection, multiple-object tracking (MOT),
+and single-object tracking (SOT) tracks. The released task checkpoints share a
+temporal YOLOFT backbone and use separate Detection, MOT, and SOT heads.
 
-[news]: We will soon be releasing XS-VIDv2, incorporating many new videos and scenarios, significantly expanding our dataset! Please stay tuned!
+The canonical dataset annotations, released checkpoints, and project page are
+available from [XS-VID](https://gjhhust.github.io/XS-VID/). The implementation
+is based on the [Ultralytics](https://github.com/ultralytics/ultralytics)
+codebase and includes the operators required by the original YOLOFT model.
 
-## :ferris_wheel: Dependencies
- - CUDA 11.7
- - Python 3.8
- - PyTorch 1.12.1(cu116)
- - TorchVision 0.13.1(cu116)
- - numpy 1.24.4
+## Installation
 
-## :open_file_folder: Datasets
-Our work is based on the large-scale extremely small video object detection benchmark **XS-VID**. Download the dataset(s) from corresponding links below.
-- [Google drive]：[annotations](https://drive.google.com/file/d/1-MF_H6OnLL-6ZAHwmwTOdxIeKY9zqGO9/view?usp=sharing); [images(0-3)](https://drive.google.com/drive/folders/1EGTIWLCLUAlKfbq7KEeHqXL8PAyKHNQ_?usp=sharing); [images(4-5)](https://drive.google.com/drive/folders/1m7YL3XVDjmiiVEy_rY4gVr0tJxnn8e0Y?usp=sharing);
-- [BaiduNetDisk]：[annotations and images](https://pan.baidu.com/s/1VXle03mUYpKtmp3xj6C4dA?pwd=yp5g);
-
-Please choose a download method to download the annotations and all images. Make sure all the split archive files (e.g., `images.zip`, `images.z01`, `images.z02`, etc.) are in the same directory. Use the following command to extract them:
+The released checkpoints were validated with Linux, CUDA, and PyTorch 1.12.1.
+Other recent PyTorch/CUDA combinations may work, but are not part of the
+reproduction target.
 
 ```bash
-unzip images.zip
-unzip annotations.zip
-```
-We have released several annotation formats to facilitate subsequent research and use, including COCO, COCOVID, YOLO
-
-## 🛠️ Install
-This repository is build on **[Ultralytics](https://github.com/ultralytics/ultralytics) 8.0.143**  which can be installed by running the following scripts. Please ensure that all dependencies have been satisfied before setting up the environment.
-```
-scp -r -P 2026 /data/jiahaoguo/datasets/gaode_6/annotations/yolo/gaode_6_rm198_exclude14569*  jiahaoguo@115.156.158.8:/data/jiahaoguo/datasets/gaode_6/annotations/yolo/
-
-
-conda create --name yoloft python=3.10
+conda create -n yoloft python=3.8 -y
 conda activate yoloft
-pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu118
-git clone https://github.com/gjhhust/YOLOFT
-cd YOLOFT
-pip install -r requirements.txt 
-pip install -e .
-pip install -U openmim
-mim install mmcv
-pip install mmcv-full
-
-cd ./ultralytics/nn/modules/ops_dcnv3
-python setup.py build install
-
-cd ../alt_cuda_corr_sparse
-python setup.py build install
+pip install torch==1.12.1 torchvision==0.13.1 --extra-index-url https://download.pytorch.org/whl/cu116
+git clone https://github.com/gjhhust/ultralytics.git yoloft
+cd yoloft
+git checkout xsvid-v2-legacy-release
+pip install -e ".[xsvid]"
 ```
 
-## :hourglass: Data preparation
+Build the two CUDA extensions once in the same environment:
 
-If you want to use a custom video dataset for training tests, it needs to be converted to yolo format for annotation, and the dataset files are organized in the following format:
-
-```
-data_root_dir/               # Root data directory
-├── test.txt                 # List of test data files, each line contains a relative path to an image file
-├── train.txt                # List of training data files, each line contains a relative path to an image file
-├── images/                  # Directory containing image files
-│   ├── video1/              # Directory for image files of the first video
-│   │   ├── 0000000.png      # First frame image file of the first video
-│   │   └── 0000001.png      # Second frame image file of the first video
-│   ├── video2/              # Directory for image files of the second video
-│   │   └── ...              # More image files
-│   └── ...                  # More video directories
-└── labels/                  # Directory containing label files
-    ├── video1/              # Directory for label files of the first video
-    │   ├── 0000000.txt      # Label file for the first frame of the first video (matches the image file)
-    │   └── 0000001.txt      # Label file for the second frame of the first video (matches the image file)
-    ├── video2/              # Directory for label files of the second video
-    │   └── ...              # More label files
-    └── ...                  # More video directories
+```bash
+cd ultralytics/nn/modules/ops_dcnv3 && python setup.py build install
+cd ../alt_cuda_corr_sparse && python setup.py build install
+cd ../../../..
 ```
 
+Check that the three released task checkpoints load against this checkout:
 
-Note: The name of the image and the name of the label in yolo format must be the same, and the format is frameNumber.png, e.g. "0000001.png and 0000001.txt".
-
-## 数据集准备
-1. XS-VID（视频训练和单帧训练都行）：
-通过该网页直接下载可以
-https://modelscope.cn/datasets/lanlanlanrr/XS-VID/files
-
-之后修改一下config/dataset/XS-VIDv2.yaml配置文件中的数据集地址即可
-
-（1） 单帧训练：split_length: [1]   train_slit: [0] #从0epoch开始就1帧训练
-
-（2） n帧传递loss训练 split_length: [n]  train_slit: [0] #从0epoch开始就n帧训练
-
-（3）在一次训练中变化帧训练 split_length: [1, n]   train_slit: [0, 10] #意思是先1帧训练，然后10epoch时进行n帧训练
-
-
-在注意训练的batch_size需要设置在XS-VIDv2.yaml
-```yaml
-split_batch_dict:
-  1: 32
-  2: 15 #s1
-  3: 8
-  4: 6
-  5: 5
-  6: 4
-  8: 7
+```bash
+python tools/xsvid/smoke_checkpoints.py \
+  --model-package /path/to/YOLOFT-XSVID-v2 \
+  --output /tmp/xsvid_checkpoint_smoke.json
 ```
-意思是1帧训练时，batch设置为32。2帧时自动设置为15。以此类推。
 
-2. coco数据集
-ultralytics/data/scripts/get_coco.sh内自带脚本
+## Dataset preparation
 
-3. 
+Download and extract the XS-VID v2 media and annotations into one directory.
+The resulting root contains `images/` and `annotations/`; the distributed
+release also includes portable `labels/` and `splits/` views. The canonical
+`annotations/train.json` and `annotations/test.json` are the source of truth.
+The dataset repository documents integrity checks and the optional development
+split.
 
-## 代码结构简述
-yoloft代码基于yolo构建，新增如下
-1. 视频帧训练（n个帧计算一次loss0）
-2. video的dataset和sampler（详情见models/yoloft/detect/train.py）中如何build dataset
-3. 模型结构配置文件 config/yoloft_onxx/yoloftS_dcn_dy_s1_t.yaml 内目前小目标的速度和效率兼具比较好，将C2f换成C2f_DCNv3效果会提升很多，但是速度会下降，取折中得
-4. mosia数据增强对于视频训练还是很有用的，目前视频训练一次视频太多会掉点，推测是bbox传递梯度比较差，segment标注来训练视频模块比较好
-5. 现在训练阶段 （1）coco预训练200e -> 
-              （2）小目标的RGB超大混合数据集预训练100e -> 
-              （3）（目前跳过）（还没改好代码）改成segment头，设置其他层学习率低，设置视频模块学习率高进行学习n epoch
-              （4）-> 最后一步就是业务数据微调
+Create the small data YAML bridge expected by the legacy Detection loader:
+
+```bash
+python tools/xsvid/prepare_legacy_layout.py \
+  --data-root /path/to/XS-VID-v2 \
+  --detection-protocol paper
+```
+
+Use `--detection-protocol canonical` for new Detection benchmark results. The
+`paper` view is provided solely for exact reproduction of the submitted
+Detection table.
+
+## Detection (VID)
+
+Run temporal YOLOFT-L on the complete benchmark test partition:
+
+```bash
+python tools/xsvid/eval_vid.py \
+  --config /path/to/YOLOFT-XSVID-v2/configs/yoloft-l-temporal.yaml \
+  --weights /path/to/YOLOFT-XSVID-v2/checkpoints/yoloft-l-xsvid-v2-paper.pt \
+  --data /path/to/XS-VID-v2/legacy_yoloft.yaml \
+  --cfg config/train/default.yaml \
+  --project /path/to/results --name vid_test --device 0
+
+python tools/xsvid/score_detection.py \
+  --gt /path/to/XS-VID-v2/annotations/protocols/paper_detection_test.json \
+  --pred /path/to/results/vid_test/predictions.json \
+  --output /path/to/results/vid_test/metrics.json
+```
+
+The expected Detection AP is 29.27 on the paper compatibility view and 29.33
+on canonical `annotations/test.json`; both round to the 29.3 AP reported in
+the paper.
+
+## Multiple-object tracking (MOT)
+
+MOT first extracts appearance embeddings from the released MOT checkpoint,
+then associates the Detection predictions with the bundled BoT-SORT pipeline.
+The embedding extraction is sharded by video and can be run in parallel.
+
+```bash
+python dump_omni_emb.py \
+  --data-root /path/to/XS-VID-v2 \
+  --annotation /path/to/XS-VID-v2/annotations/test.json \
+  --det-json /path/to/results/vid_test/predictions.json \
+  --config /path/to/YOLOFT-XSVID-v2/configs/yoloft-l-temporal.yaml \
+  --ckpt /path/to/YOLOFT-XSVID-v2/checkpoints/yoloft-l-xsvid-v2-mot.pt \
+  --out /path/to/results/mot/shard_0.pkl \
+  --shard 0/3 --det-floor 0.001 --roi-grid 5 --gpu 0
+
+# Run the equivalent command for --shard 1/3 and 2/3, then merge.
+python tools/xsvid/merge_omni_dumps.py \
+  --inputs /path/to/results/mot/shard_0.pkl \
+           /path/to/results/mot/shard_1.pkl \
+           /path/to/results/mot/shard_2.pkl \
+  --output /path/to/results/mot/merged.pkl
+
+python tools/xsvid/track_botsort.py \
+  --data-root /path/to/XS-VID-v2 \
+  --annotation /path/to/XS-VID-v2/annotations/test.json \
+  --dump /path/to/results/mot/merged.pkl \
+  --output /path/to/results/mot/predictions.json
+
+python tools/xsvid/normalize_tao_tracks.py \
+  --input /path/to/results/mot/predictions.json \
+  --output /path/to/results/mot/predictions.json
+
+python tools/xsvid/score_tao.py \
+  --data-root /path/to/XS-VID-v2 \
+  --pred /path/to/results/mot/predictions.json \
+  --track-field paper_track_id \
+  --output /path/to/results/mot/metrics.json
+```
+
+For new MOT results, use the canonical `track_id` field instead. The sparse
+`paper_track_id` compatibility field falls back to `track_id` and is retained
+only for reproducing the submitted paper protocol.
+
+## Single-object tracking (SOT)
+
+Run all 272 XS-VID SOT sequences and score the results:
+
+```bash
+python eval_sot_transt.py \
+  --data-root /path/to/XS-VID-v2 \
+  --out-root /path/to/results/sot \
+  --config /path/to/YOLOFT-XSVID-v2/configs/yoloft-l-temporal.yaml \
+  --ckpt /path/to/YOLOFT-XSVID-v2/checkpoints/yoloft-l-xsvid-v2-sot.pt \
+  --param yoloft_sot --feat-mode fuse918 --gpu 0
+
+python tools/xsvid/score_sot.py \
+  --data-root /path/to/XS-VID-v2 \
+  --predictions /path/to/results/sot/yoloft_sot \
+  --output /path/to/results/sot/metrics.json
+```
+
+The released checkpoint reproduces 57.09 success AUC and 79.35 precision at
+20 pixels on the 272 test sequences.
+
+## Training task heads
+
+The Detection checkpoint initializes the shared temporal backbone. The MOT and
+SOT commands below freeze that backbone and fine-tune only their task-specific
+heads for ten epochs. They are independent extensions, not a jointly trained
+single checkpoint.
+
+Prepare lightweight MOT and SOT training views from the canonical training
+annotations once:
+
+```bash
+python tools/xsvid/prepare_unified_train_data.py \
+  --data-root /path/to/XS-VID-v2
+```
+
+Fine-tune the MOT embedding head:
+
+```bash
+python train_omni_embed.py \
+  --data-root /path/to/XS-VID-v2 \
+  --det-ckpt /path/to/YOLOFT-XSVID-v2/checkpoints/yoloft-l-xsvid-v2-paper.pt \
+  --config /path/to/YOLOFT-XSVID-v2/configs/yoloft-l-temporal.yaml \
+  --out-dir /path/to/results/mot_train \
+  --tag yoloft_mot --epochs 10 --emb-stride 4 --embed-dim 256 --gpu 0
+```
+
+Fine-tune the SOT head:
+
+```bash
+python train_sot_transt.py \
+  --data-root /path/to/XS-VID-v2 \
+  --det-ckpt /path/to/YOLOFT-XSVID-v2/checkpoints/yoloft-l-xsvid-v2-paper.pt \
+  --transt-pretrain /path/to/YOLOFT-XSVID-v2/checkpoints/transt.pth \
+  --config /path/to/YOLOFT-XSVID-v2/configs/yoloft-l-temporal.yaml \
+  --out-dir /path/to/results/sot_train \
+  --tag yoloft_sot --epochs 10 --feat-mode fuse918 --gpu 0
+```
+
+## Citation
+
+```bibtex
+@article{guo2024xsvid,
+  title={XS-VID: An Extremely Small Video Object Detection Dataset},
+  author={Guo, Jiahao and Xu, Ziyang and Wu, Lianjun and Gao, Fei and Liu, Wenyu and Wang, Xinggang},
+  journal={arXiv preprint arXiv:2407.18137},
+  year={2024}
+}
+```
+
+## License and acknowledgements
+
+The code retains the upstream Ultralytics license. Third-party BoT-SORT code
+and its licenses are preserved under `third_party/boxmot/`. Please cite the
+respective projects when using those components.

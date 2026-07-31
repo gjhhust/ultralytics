@@ -1745,8 +1745,9 @@ class DepthSeparableConv3D(nn.Module):
         out = self.pointwise_bn(out)
         out = self.pointwise_act(out)
 
-        # Return only the output corresponding to the 'current' time step (assuming it's the second one)
-        return out[:, :, 1, :, :] # Shape: [b, out_channels, h', w']
+        # Aggregate both responses so the output depends on the previous and current states.
+        # This keeps the legacy checkpoint parameter shapes unchanged.
+        return out.mean(dim=2) # Shape: [b, out_channels, h', w']
     
 class FDCN(nn.Module):
     default_act = nn.SiLU()  # default activation
@@ -2059,6 +2060,9 @@ class MSTFv1(nn.Module):
                                         kernel_size = 3)
             self.forward = self.forward_mstf
         elif mode == "conv3d":
+            # Historical YOLOFT checkpoints construct MSTFv1 with this state
+            # channel appended to the two spatial inputs.
+            in_channels.append(self.net_dim)
             assert self.net_dim == in_channels[-1], f"input last feature dims must equal to now feature dims, plase set InputData:[{in_channels[-1]}]->[{self.net_dim}]"
             self.block = FDCN(DepthSeparableConv3D(in_channels=self.net_dim, out_channels=self.net_dim), 
                                         in_channel, 
